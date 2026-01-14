@@ -191,9 +191,6 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
 st.set_page_config(page_title="ระบบสมาชิก LSX Ranking", page_icon="🏆")
 st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 
-if st.button("🔄 โหลดข้อมูลล่าสุดจาก Notion"):
-    st.cache_data.clear()
-    st.rerun()
 
 # 🔥 แก้ไข: ประกาศ Cookie Manager ตรงนี้เลย (ไม่ต้องมี decorator หรือ function ห่อ)
 cookie_manager = stx.CookieManager()
@@ -338,7 +335,20 @@ else:
         else: st.info("-")
 
     st.markdown("---")
+    
+    # 🔥 แก้ไขปุ่ม Logout: เพิ่มเวลาหน่วง (time.sleep)
     if st.button("Logout"):
-        cookie_manager.delete("lsx_user_id") 
+        # 1. สั่งลบ Cookie
+        cookie_manager.delete("lsx_user_id")
+        
+        # 2. เคลียร์ข้อมูลใน Session
         st.session_state['user_page'] = None
+        
+        # 3. แจ้งเตือน
+        st.toast("👋 กำลังออกจากระบบ...")
+        
+        # 4. ⚠️ สำคัญมาก: รอ 2 วินาที ให้ Browser ลบ Cookie เสร็จก่อน
+        time.sleep(2)
+        
+        # 5. โหลดหน้าใหม่
         st.rerun()
