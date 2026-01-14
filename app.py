@@ -127,6 +127,7 @@ def get_calendar_events():
         except: break
     return events
 
+# 🔥 ฟังก์ชัน Ranking: ตัดเลข "1/213" -> "1" สำหรับแสดงในตาราง
 @st.cache_data(ttl=300) 
 def get_ranking_dataframe():
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
@@ -148,6 +149,17 @@ def get_ranking_dataframe():
                 name = ""
                 try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
+                
+                # ✅ Logic ตัดเลขอันดับ (เฉพาะในตาราง)
+                rank_val = 9999
+                try:
+                    r_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
+                    if r_list:
+                        r_text = r_list[0]["text"]["content"]
+                        if "/" in r_text: rank_val = int(r_text.split('/')[0])
+                        else: rank_val = int(r_text)
+                except: pass
+
                 photo_url = None
                 try: photo_url = props.get("Photo", {}).get("files", [])[0]["external"]["url"]
                 except: pass
@@ -157,66 +169,22 @@ def get_ranking_dataframe():
                 title = "-"
                 try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
                 except: pass
-                members.append({ "id": page["id"], "score": score, "name": name, "photo": photo_url, "group": group, "title": title })
+                
+                members.append({ 
+                    "id": page["id"], "score": score, "name": name, 
+                    "photo": photo_url, "group": group, "title": title,
+                    "rank_num": rank_val # เก็บเลขเดี่ยวๆ ไว้เรียงและแสดงผล
+                })
             has_more = res.get("has_more", False)
             next_cursor = res.get("next_cursor")
         except: break
+    
     if not members: return pd.DataFrame()
     df = pd.DataFrame(members)
-    df = df.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
-    df.insert(0, 'อันดับ', df.index + 1)
+    # เรียงตาม Rank ที่ตัดมาแล้ว
+    df = df.sort_values(by=["rank_num", "score"], ascending=[True, False]).reset_index(drop=True)
+    df['อันดับ'] = df['rank_num'] # ใช้เลขเดี่ยวๆ เป็นคอลัมน์แสดงผล
     return df
-
-@st.cache_data(ttl=300)
-def get_participation_stats(user_id):
-    all_main_project_ids = set()
-    target_start = date(2026, 1, 1)
-    target_end = date(2026, 3, 31)
-    p_url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    has_more = True; next_cursor = None
-    while has_more:
-        payload = {}
-        if next_cursor: payload["start_cursor"] = next_cursor
-        try:
-            res = requests.post(p_url, json=payload, headers=headers).json()
-            for page in res.get("results", []):
-                props = page.get('properties', {})
-                event_type = "ทั่วไป"
-                if 'ประเภทงาน' in props:
-                    pt = props['ประเภทงาน']
-                    if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
-                    elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
-                event_date_str = None
-                date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-                if date_prop: event_date_str = date_prop.get("date", {}).get("start")
-                is_date_in_range = False
-                if event_date_str:
-                    try:
-                        e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
-                        if target_start <= e_date <= target_end: is_date_in_range = True
-                    except: pass
-                if "งานย่อย" not in str(event_type) and is_date_in_range:
-                    all_main_project_ids.add(page['id'])
-            has_more = res.get("has_more", False)
-            next_cursor = res.get("next_cursor")
-        except: break
-    total_main = len(all_main_project_ids)
-    if total_main == 0: return 0, 0, 0.0
-    h_url = f"https://api.notion.com/v1/databases/2b1e6d24b97d803786c2ec7011c995ef/query"
-    payload_h = { "filter": { "property": "สมาชิกแรงค์", "relation": { "contains": user_id } } }
-    attended = set()
-    try:
-        h_has_more = True; h_cursor = None
-        while h_has_more:
-            if h_cursor: payload_h["start_cursor"] = h_cursor
-            h_res = requests.post(h_url, json=payload_h, headers=headers).json()
-            for hp in h_res.get("results", []):
-                pr = hp["properties"].get("ชื่องานแข่ง", {}).get("relation", [])
-                if pr and pr[0]['id'] in all_main_project_ids: attended.add(pr[0]['id'])
-            h_has_more = h_res.get("has_more", False)
-            h_cursor = h_res.get("next_cursor")
-    except: pass
-    return len(attended), total_main, len(attended)/total_main if total_main else 0
 
 def upload_image_to_imgbb(image_file):
     url = "https://api.imgbb.com/1/upload"
@@ -301,7 +269,14 @@ else:
             df_leaderboard = get_ranking_dataframe()
             if not df_leaderboard.empty:
                 st.dataframe(df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
-                    column_config={ "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"), "name": st.column_config.TextColumn("ชื่อสมาชิก"), "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"), "group": st.column_config.TextColumn("Rank Group"), "title": st.column_config.TextColumn("Rank Title") },
+                    column_config={ 
+                        "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
+                        "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"), 
+                        "name": st.column_config.TextColumn("ชื่อสมาชิก"), 
+                        "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"), 
+                        "group": st.column_config.TextColumn("Rank Group"), 
+                        "title": st.column_config.TextColumn("Rank Title") 
+                    },
                     hide_index=True, use_container_width=True, height=600)
             else: st.warning("ไม่พบข้อมูลสมาชิก")
             
@@ -354,11 +329,27 @@ else:
         user_page = st.session_state['user_page']
         page_id = user_page['id']
         props = user_page['properties']
-        with st.spinner(".."): df_all_ranks = get_ranking_dataframe()
+        
+        # 🔥 ส่วนที่ 1: ดึงอันดับ (ไม่ตัด! เพื่อแสดงในปุ่ม Profile)
         try:
-            my_row = df_all_ranks[df_all_ranks['id'] == page_id].iloc[0]
-            my_rank = my_row['อันดับ']; total_members = len(df_all_ranks)
-        except: my_rank, total_members = "-", 0
+            rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
+            full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
+        except: full_rank_str = "-"
+
+        # 🔥 ส่วนที่ 2: ดึงสถิติ
+        try:
+            stats_list = props.get("สถิติเข้าร่วม SS2", {}).get("rich_text", [])
+            stats_str = stats_list[0]["text"]["content"] if stats_list else "0/0"
+        except: stats_str = "0/0"
+        
+        try:
+            attended_str, total_str = stats_str.split("/")
+            attended = int(attended_str)
+            total_events = int(total_str)
+            progress_val = attended / total_events if total_events > 0 else 0.0
+        except:
+            attended, total_events, progress_val = 0, 0, 0.0
+
         try: current_display = props["ชื่อ"]["title"][0]["text"]["content"]
         except: current_display = ""
         try: current_photo_url = props["Photo"]["files"][0]["external"]["url"]
@@ -382,16 +373,19 @@ else:
             st.markdown(f"**🎖️ Rank SS2:** {rank_ss2}")
             st.metric(label="⭐ คะแนน SS2", value=score_ss2)
             st.markdown("---")
-            if st.button(f"🏆 อันดับที่ {my_rank} / {total_members}", use_container_width=True):
+            
+            # 🔥 ปุ่มแสดง Rank (แสดงเต็มๆ 1/213 ตามที่ขอ)
+            if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
                 st.session_state['view_mode'] = 'leaderboard'; st.rerun()
             if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
                 st.session_state['view_mode'] = 'calendar'; st.rerun()
             if st.button("📸 แกลเลอรีรูปภาพ", use_container_width=True):
                 st.session_state['view_mode'] = 'gallery'; st.rerun()
-            with st.spinner(".."): attended, total_events, progress_val = get_participation_stats(page_id)
+            
             st.markdown("**🔥 สถิติเข้าร่วมงานหลัก**")
             st.progress(progress_val)
-            st.caption(f"เข้าร่วมแล้ว: {attended} / {total_events} งาน")
+            st.caption(f"เข้าร่วมแล้ว: {stats_str} งาน")
+            
         with col2:
             st.subheader("📝 แก้ไขข้อมูลส่วนตัว")
             new_display = st.text_input("Display Name", value=current_display)
@@ -439,7 +433,6 @@ else:
             time.sleep(2)
             st.rerun()
 
-# 🔥 FOOTER (ใส่เครดิตตามที่ขอ)
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown(
     """
