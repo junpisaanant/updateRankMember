@@ -4,7 +4,7 @@ import time
 import pandas as pd
 from datetime import datetime, date
 import extra_streamlit_components as stx
-from streamlit_calendar import calendar # 📅 ต้องเพิ่มบรรทัดนี้
+from streamlit_calendar import calendar
 
 # ================= CONFIGURATION =================
 try:
@@ -38,50 +38,77 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-# 🔥 ฟังก์ชันดึงข้อมูลปฏิทิน (ฉบับแก้ไข: ย้าย URL ไปซ่อน เพื่อใช้กับ Dialog)
+@st.cache_data(ttl=300)
+def get_photo_gallery():
+    gallery_items = []
+    url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
+    has_more = True; next_cursor = None
+    while has_more:
+        payload = {}
+        if next_cursor: payload["start_cursor"] = next_cursor
+        try:
+            res = requests.post(url, json=payload, headers=headers).json()
+            for page in res.get("results", []):
+                props = page.get('properties', {})
+                photo_url = ""
+                try: 
+                    p_url_prop = props.get("Photo URL") 
+                    if p_url_prop: photo_url = p_url_prop.get("url", "")
+                except: pass
+                if photo_url:
+                    if not photo_url.startswith(("http://", "https://")): photo_url = f"https://{photo_url}"
+                    title = "Unknown Event"
+                    try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
+                    except: pass
+                    event_date = None
+                    date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
+                    if date_prop: 
+                        d_str = date_prop.get("date", {}).get("start")
+                        if d_str:
+                             try: event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
+                             except: pass
+                    gallery_items.append({
+                        "title": title, "date": event_date, 
+                        "date_str": event_date.strftime("%d %b %Y") if event_date else "ไม่ระบุวันที่",
+                        "photo_url": photo_url
+                    })
+            has_more = res.get("has_more", False)
+            next_cursor = res.get("next_cursor")
+        except: break
+    gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
+    return gallery_items
+
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
     target_start = date(2026, 1, 1)
     target_end = date(2026, 3, 31)
-    
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    has_more = True
-    next_cursor = None
-    
+    has_more = True; next_cursor = None
     while has_more:
         payload = {}
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
-            res = requests.post(url, json=payload, headers=headers)
-            data = res.json()
-            
-            for page in data.get("results", []):
+            res = requests.post(url, json=payload, headers=headers).json()
+            for page in res.get("results", []):
                 props = page.get('properties', {})
-                
-                # 1. ชื่อ + ประเภท
                 title = "Unknown Event"
                 try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
-                
                 event_type = "ทั่วไป"
                 if 'ประเภทงาน' in props:
                     pt = props['ประเภทงาน']
                     if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
                     elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
-                
-                # 2. วันที่
                 event_date_str = None
                 date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                 if date_prop: event_date_str = date_prop.get("date", {}).get("start")
-                
-                # 3. URL
                 event_url = ""
                 try: 
                     url_prop = props.get("URL")
                     if url_prop: event_url = url_prop.get("url", "")
                 except: pass
-
+                if event_url and not event_url.startswith(("http://", "https://")): event_url = f"https://{event_url}"
                 if event_date_str:
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
@@ -89,22 +116,14 @@ def get_calendar_events():
                             bg_color = "#FF4B4B"
                             if "งานย่อย" in str(event_type): bg_color = "#708090"
                             elif "งานใหญ่" in str(event_type): bg_color = "#FFD700"
-                            
                             events.append({
-                                "title": f"[{event_type}] {title}",
-                                "start": event_date_str,
-                                "backgroundColor": bg_color,
-                                "borderColor": bg_color,
-                                "allDay": True,
-                                # ⚠️ ย้าย URL มาเก็บใน extendedProps (สำคัญมาก!)
-                                "extendedProps": {
-                                    "url": event_url if event_url else "#"
-                                }
+                                "title": f"[{event_type}] {title}", "start": event_date_str,
+                                "backgroundColor": bg_color, "borderColor": bg_color, "allDay": True,
+                                "extendedProps": { "url": event_url if event_url else "#" }
                             })
                     except: pass
-            
-            has_more = data.get("has_more", False)
-            next_cursor = data.get("next_cursor")
+            has_more = res.get("has_more", False)
+            next_cursor = res.get("next_cursor")
         except: break
     return events
 
@@ -242,9 +261,8 @@ st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 cookie_manager = stx.CookieManager()
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
-if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' # จัดการหน้าจอด้วยตัวแปรเดียว
+if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' 
 
-# Auto Login
 if st.session_state['user_page'] is None:
     time.sleep(0.5)
     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
@@ -258,7 +276,6 @@ if st.session_state['user_page'] is None:
                 st.rerun()
             else: cookie_manager.delete("lsx_user_id")
 
-# --- LOGIN PAGE ---
 if st.session_state['user_page'] is None:
     with st.form("login_form"):
         st.info("💡 Username คือ id ตามด้วย @lsxrank")
@@ -273,7 +290,6 @@ if st.session_state['user_page'] is None:
                 st.rerun()
             else: st.error("Login failed")
 
-# --- MAIN APP (LOGGED IN) ---
 else:
     # 🏆 MODE 1: LEADERBOARD
     if st.session_state['view_mode'] == 'leaderboard':
@@ -281,93 +297,68 @@ else:
         if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_lb"):
             st.session_state['view_mode'] = 'profile'
             st.rerun()
-        
         with st.spinner("กำลังโหลดข้อมูลอันดับ..."):
             df_leaderboard = get_ranking_dataframe()
             if not df_leaderboard.empty:
-                st.dataframe(
-                    df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
-                    column_config={
-                        "photo": st.column_config.ImageColumn("รูปโปรไฟล์"),
-                        "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"),
-                        "name": st.column_config.TextColumn("ชื่อสมาชิก"),
-                        "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"),
-                        "group": st.column_config.TextColumn("Rank Group"),
-                        "title": st.column_config.TextColumn("Rank Title"),
-                    },
-                    hide_index=True, use_container_width=True, height=600
-                )
+                st.dataframe(df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
+                    column_config={ "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"), "name": st.column_config.TextColumn("ชื่อสมาชิก"), "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"), "group": st.column_config.TextColumn("Rank Group"), "title": st.column_config.TextColumn("Rank Title") },
+                    hide_index=True, use_container_width=True, height=600)
             else: st.warning("ไม่พบข้อมูลสมาชิก")
             
     # 📅 MODE 2: CALENDAR
     elif st.session_state['view_mode'] == 'calendar':
-        
-        # 1. สร้างตัวแปรกันลืม
-        if 'last_clicked_event' not in st.session_state:
-            st.session_state['last_clicked_event'] = None
-
-        # 2. สร้างฟังก์ชัน Popup (เอาปุ่มปิดออกแล้ว)
+        if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
         @st.dialog("รายละเอียดกิจกรรม")
         def show_event_popup(title, url):
             st.write(f"คุณต้องการเปิดหน้าเว็บของงาน **{title}** หรือไม่?")
             st.write("") 
-            
-            # เหลือแค่ปุ่มเดียว เต็มความกว้าง
             st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
-
         st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
-        
         if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_cal"):
             st.session_state['view_mode'] = 'profile'
             st.session_state['last_clicked_event'] = None
             st.rerun()
-            
         with st.spinner("กำลังโหลดปฏิทิน..."):
             events = get_calendar_events()
-            
-            calendar_options = {
-                "headerToolbar": {
-                    "left": "today prev,next",
-                    "center": "title",
-                    "right": "dayGridMonth,listMonth"
-                },
-                "initialDate": "2026-01-01",
-                "initialView": "dayGridMonth",
-            }
-            
-            # รับค่าจากปฏิทิน
+            calendar_options = { "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, "initialDate": "2026-01-01", "initialView": "dayGridMonth" }
             cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'])
-            
-            # 🔥 Logic เช็คการคลิก
             if cal_data.get("callback") == "eventClick":
                 current_click_data = cal_data["eventClick"]["event"]
-                
-                # เช็คว่าเป็นคลิกใหม่หรือไม่
                 if current_click_data != st.session_state['last_clicked_event']:
                     st.session_state['last_clicked_event'] = current_click_data
-                    
                     clicked_title = current_click_data["title"]
                     clicked_url = current_click_data.get("extendedProps", {}).get("url")
-                    
-                    if clicked_url and clicked_url != "#":
-                        show_event_popup(clicked_title, clicked_url)
-                    else:
-                        st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
+                    if clicked_url and clicked_url != "#": show_event_popup(clicked_title, clicked_url)
+                    else: st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
 
-    # 👤 MODE 3: PROFILE (หน้าหลัก)
+    # 📸 MODE 3: PHOTO GALLERY
+    elif st.session_state['view_mode'] == 'gallery':
+        st.subheader("📸 แกลเลอรีรูปภาพกิจกรรม")
+        if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_gal"):
+            st.session_state['view_mode'] = 'profile'
+            st.rerun()
+        with st.spinner("กำลังโหลดรูปภาพ..."):
+            gallery_items = get_photo_gallery()
+            if not gallery_items: st.info("ยังไม่มีข้อมูลรูปภาพกิจกรรม")
+            else:
+                cols = st.columns(2)
+                for i, item in enumerate(gallery_items):
+                    with cols[i % 2]:
+                        with st.container(border=True):
+                            st.write(f"**{item['title']}**")
+                            st.caption(f"🗓️ {item['date_str']}")
+                            st.link_button("🖼️ ดูอัลบั้มรูป", item['photo_url'], use_container_width=True)
+
+    # 👤 MODE 4: PROFILE
     else:
         user_page = st.session_state['user_page']
         page_id = user_page['id']
         props = user_page['properties']
-        
-        # Calculate Rank
         with st.spinner(".."): df_all_ranks = get_ranking_dataframe()
         try:
             my_row = df_all_ranks[df_all_ranks['id'] == page_id].iloc[0]
             my_rank = my_row['อันดับ']; total_members = len(df_all_ranks)
         except: my_rank, total_members = "-", 0
-
-        # Props
         try: current_display = props["ชื่อ"]["title"][0]["text"]["content"]
         except: current_display = ""
         try: current_photo_url = props["Photo"]["files"][0]["external"]["url"]
@@ -384,31 +375,23 @@ else:
         reward_history_ids = [r['id'] for r in props.get("อันดับ 1-4 SS1", {}).get("relation", [])]
 
         col1, col2 = st.columns([1, 2])
-        
         with col1:
             st.image(current_photo_url, caption="รูปปัจจุบัน", width=150)
             st.divider()
             st.markdown(f"**🏆 Rank Group:** {rank_group}")
             st.markdown(f"**🎖️ Rank SS2:** {rank_ss2}")
             st.metric(label="⭐ คะแนน SS2", value=score_ss2)
-            
             st.markdown("---")
-            # ปุ่มดูอันดับ
             if st.button(f"🏆 อันดับที่ {my_rank} / {total_members}", use_container_width=True):
-                st.session_state['view_mode'] = 'leaderboard'
-                st.rerun()
-
-            # 🔥 ปุ่มดูปฏิทิน (เพิ่มตรงนี้)
+                st.session_state['view_mode'] = 'leaderboard'; st.rerun()
             if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
-                st.session_state['view_mode'] = 'calendar'
-                st.rerun()
-
-            with st.spinner(".."):
-                attended, total_events, progress_val = get_participation_stats(page_id)
+                st.session_state['view_mode'] = 'calendar'; st.rerun()
+            if st.button("📸 แกลเลอรีรูปภาพ", use_container_width=True):
+                st.session_state['view_mode'] = 'gallery'; st.rerun()
+            with st.spinner(".."): attended, total_events, progress_val = get_participation_stats(page_id)
             st.markdown("**🔥 สถิติเข้าร่วมงานหลัก**")
             st.progress(progress_val)
             st.caption(f"เข้าร่วมแล้ว: {attended} / {total_events} งาน")
-
         with col2:
             st.subheader("📝 แก้ไขข้อมูลส่วนตัว")
             new_display = st.text_input("Display Name", value=current_display)
@@ -420,11 +403,8 @@ else:
             new_pass = st.text_input("รหัสผ่านใหม่", type="password")
             confirm_pass = st.text_input("ยืนยันรหัสผ่าน", type="password")
             if st.button("💾 บันทึกข้อมูล", type="primary"):
-                error_flag = False
-                final_photo_url = None
-                if new_pass and new_pass != confirm_pass:
-                    st.error("รหัสผ่านไม่ตรงกัน")
-                    error_flag = True
+                error_flag = False; final_photo_url = None
+                if new_pass and new_pass != confirm_pass: st.error("รหัสผ่านไม่ตรงกัน"); error_flag = True
                 if uploaded_file and not error_flag:
                     with st.spinner("Uploading..."):
                         l = upload_image_to_imgbb(uploaded_file)
@@ -432,10 +412,7 @@ else:
                         else: error_flag = True
                 if not error_flag:
                     if update_member_info(page_id, new_display if new_display != current_display else None, final_photo_url, new_pass if new_pass else None, new_birth_input if new_birth_input != current_birth else None):
-                        st.toast("✅ สำเร็จ!")
-                        time.sleep(1)
-                        get_ranking_dataframe.clear()
-                        st.rerun()
+                        st.toast("✅ สำเร็จ!"); time.sleep(1); get_ranking_dataframe.clear(); st.rerun()
                     else: st.error("บันทึกไม่สำเร็จ")
 
         st.markdown("---")
@@ -461,3 +438,14 @@ else:
             st.toast("👋 กำลังออกจากระบบ...")
             time.sleep(2)
             st.rerun()
+
+# 🔥 FOOTER (ใส่เครดิตตามที่ขอ)
+st.markdown("<br><hr>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style='text-align: center; color: #888; font-size: 14px; margin-bottom: 20px;'>
+        Created by LovelyToonZ
+    </div>
+    """,
+    unsafe_allow_html=True
+)
