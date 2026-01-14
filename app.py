@@ -122,12 +122,12 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
     return response.status_code == 200
 
 # ================= UI PART =================
-st.set_page_config(page_title="Member Portal", page_icon="🔐")
+st.set_page_config(page_title="ระบบสมาชิก LSX Ranking", page_icon="🏆")
 
 if 'user_page' not in st.session_state:
     st.session_state['user_page'] = None
 
-st.title("🔐 แก้ไขข้อมูลสมาชิก")
+st.title("🧙‍♀️ ข้อมูลสมาชิก")
 
 # --- LOGIN ---
 if st.session_state['user_page'] is None:
@@ -244,3 +244,4 @@ else:
     if st.button("Logout"):
         st.session_state['user_page'] = None
         st.rerun()
+
