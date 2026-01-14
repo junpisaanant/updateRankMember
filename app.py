@@ -38,13 +38,14 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
+# 🔥 ปรับจูน: เพิ่ม page_size=100 + Safe Date Check
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True; next_cursor = None
     while has_more:
-        payload = {}
+        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -55,18 +56,24 @@ def get_photo_gallery():
                     p_url_prop = props.get("Photo URL") 
                     if p_url_prop: photo_url = p_url_prop.get("url", "")
                 except: pass
+                
                 if photo_url:
                     if not photo_url.startswith(("http://", "https://")): photo_url = f"https://{photo_url}"
                     title = "Unknown Event"
                     try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                     except: pass
+                    
                     event_date = None
                     date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                     if date_prop: 
-                        d_str = date_prop.get("date", {}).get("start")
-                        if d_str:
-                             try: event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
-                             except: pass
+                        # 🛡️ Safe Check
+                        d_obj = date_prop.get("date")
+                        if d_obj:
+                            d_str = d_obj.get("start")
+                            if d_str:
+                                try: event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
+                                except: pass
+                                
                     gallery_items.append({
                         "title": title, "date": event_date, 
                         "date_str": event_date.strftime("%d %b %Y") if event_date else "ไม่ระบุวันที่",
@@ -78,6 +85,7 @@ def get_photo_gallery():
     gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
     return gallery_items
 
+# 🔥 ปรับจูน: เพิ่ม page_size=100 + Safe Date Check
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -86,7 +94,7 @@ def get_calendar_events():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True; next_cursor = None
     while has_more:
-        payload = {}
+        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -100,15 +108,22 @@ def get_calendar_events():
                     pt = props['ประเภทงาน']
                     if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
                     elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
+                
                 event_date_str = None
                 date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-                if date_prop: event_date_str = date_prop.get("date", {}).get("start")
+                if date_prop: 
+                    # 🛡️ Safe Check (กันพัง)
+                    d_obj = date_prop.get("date")
+                    if d_obj:
+                        event_date_str = d_obj.get("start")
+                
                 event_url = ""
                 try: 
                     url_prop = props.get("URL")
                     if url_prop: event_url = url_prop.get("url", "")
                 except: pass
                 if event_url and not event_url.startswith(("http://", "https://")): event_url = f"https://{event_url}"
+                
                 if event_date_str:
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
@@ -127,14 +142,14 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 ฟังก์ชัน Ranking: ตัดเลข "1/213" -> "1" สำหรับแสดงในตาราง
+# 🔥 ฟังก์ชัน Ranking: page_size=100 + ตัดเลขอันดับ (เฉพาะในตาราง)
 @st.cache_data(ttl=300) 
 def get_ranking_dataframe():
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
     members = []
     has_more = True; next_cursor = None
     while has_more:
-        payload = {}
+        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -150,7 +165,7 @@ def get_ranking_dataframe():
                 try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                # ✅ Logic ตัดเลขอันดับ (เฉพาะในตาราง)
+                # Logic ตัดเลข Rank
                 rank_val = 9999
                 try:
                     r_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
@@ -173,7 +188,7 @@ def get_ranking_dataframe():
                 members.append({ 
                     "id": page["id"], "score": score, "name": name, 
                     "photo": photo_url, "group": group, "title": title,
-                    "rank_num": rank_val # เก็บเลขเดี่ยวๆ ไว้เรียงและแสดงผล
+                    "rank_num": rank_val 
                 })
             has_more = res.get("has_more", False)
             next_cursor = res.get("next_cursor")
@@ -181,9 +196,8 @@ def get_ranking_dataframe():
     
     if not members: return pd.DataFrame()
     df = pd.DataFrame(members)
-    # เรียงตาม Rank ที่ตัดมาแล้ว
     df = df.sort_values(by=["rank_num", "score"], ascending=[True, False]).reset_index(drop=True)
-    df['อันดับ'] = df['rank_num'] # ใช้เลขเดี่ยวๆ เป็นคอลัมน์แสดงผล
+    df['อันดับ'] = df['rank_num'] 
     return df
 
 def upload_image_to_imgbb(image_file):
@@ -330,7 +344,7 @@ else:
         page_id = user_page['id']
         props = user_page['properties']
         
-        # 🔥 ส่วนที่ 1: ดึงอันดับ (ไม่ตัด! เพื่อแสดงในปุ่ม Profile)
+        # 🔥 ส่วนที่ 1: ดึงอันดับเต็ม (ไม่ตัด! เพื่อแสดงในปุ่ม Profile)
         try:
             rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
             full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
@@ -374,7 +388,7 @@ else:
             st.metric(label="⭐ คะแนน SS2", value=score_ss2)
             st.markdown("---")
             
-            # 🔥 ปุ่มแสดง Rank (แสดงเต็มๆ 1/213 ตามที่ขอ)
+            # 🔥 ปุ่มแสดง Rank (แสดงเต็มๆ 1/213)
             if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
                 st.session_state['view_mode'] = 'leaderboard'; st.rerun()
             if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
