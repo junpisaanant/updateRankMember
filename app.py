@@ -4,6 +4,7 @@ import time
 import pandas as pd
 from datetime import datetime, date
 import extra_streamlit_components as stx
+from streamlit_calendar import calendar # 📅 ต้องเพิ่มบรรทัดนี้
 
 # ================= CONFIGURATION =================
 try:
@@ -37,14 +38,15 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-@st.cache_data(ttl=300) 
-def get_ranking_dataframe():
-    """ 
-    ดึงข้อมูลสมาชิกทุกคนเพื่อสร้าง Leaderboard 
-    (เพิ่มการดึง Photo, Group, Rank Title) 
-    """
-    url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
-    members = []
+# 🔥 ฟังก์ชันใหม่: ดึงข้อมูลปฏิทิน (แสดงทุกงาน + บอกประเภท)
+@st.cache_data(ttl=300)
+def get_calendar_events():
+    events = []
+    # กำหนดช่วงวันที่ (Q1 2026)
+    target_start = date(2026, 1, 1)
+    target_end = date(2026, 3, 31)
+    
+    url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True
     next_cursor = None
     
@@ -52,67 +54,99 @@ def get_ranking_dataframe():
         payload = {}
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
-            response = requests.post(url, json=payload, headers=headers)
-            if response.status_code != 200: break
-            data = response.json()
+            res = requests.post(url, json=payload, headers=headers)
+            data = res.json()
             
             for page in data.get("results", []):
-                props = page["properties"]
+                props = page.get('properties', {})
                 
-                # 1. Score
-                score = 0
-                score_prop = props.get("คะแนน Rank SS2") 
-                if score_prop:
-                    if score_prop['type'] == 'number': score = score_prop['number'] or 0
-                    elif score_prop['type'] == 'rollup': score = score_prop['rollup'].get('number', 0) or 0
-                    elif score_prop['type'] == 'formula': score = score_prop['formula'].get('number', 0) or 0
-                
-                # 2. Name
-                name = ""
-                try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
-                except: pass
-
-                # 3. Photo (เอา URL รูปมาแสดง)
-                photo_url = None
-                try: photo_url = props.get("Photo", {}).get("files", [])[0]["external"]["url"]
+                # 1. ชื่อกิจกรรม
+                title = "Unknown Event"
+                try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                # 4. Rank Group
-                rank_group = "-"
-                try: rank_group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
-                except: pass
+                # 2. ประเภทงาน
+                event_type = "ทั่วไป"
+                if 'ประเภทงาน' in props:
+                    pt = props['ประเภทงาน']
+                    if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
+                    elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
                 
-                # 5. Rank Title
-                rank_title = "-"
-                try: rank_title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
-                except: pass
+                # 3. วันที่
+                event_date_str = None
+                date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
+                if date_prop: event_date_str = date_prop.get("date", {}).get("start")
                 
-                members.append({ 
-                    "id": page["id"], 
-                    "score": score, 
-                    "name": name, 
-                    "photo": photo_url,
-                    "group": rank_group,
-                    "title": rank_title
-                })
-                
+                # 4. Logic: เอาทุกงานในช่วงเวลาที่กำหนด (ไม่กรองงานย่อยทิ้งแล้ว)
+                if event_date_str:
+                    try:
+                        e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
+                        if target_start <= e_date <= target_end:
+                            
+                            # กำหนดสีตามประเภทงาน
+                            bg_color = "#FF4B4B" # สีแดง (ค่าเริ่มต้น/งานหลัก)
+                            if "งานย่อย" in str(event_type):
+                                bg_color = "#708090" # สีเทา (SlateGray) สำหรับงานย่อย
+                            elif "งานใหญ่" in str(event_type):
+                                bg_color = "#FFD700" # สีทอง สำหรับงานใหญ่
+                            
+                            events.append({
+                                "title": f"[{event_type}] {title}", # ✅ ใส่ประเภทงานนำหน้าชื่อ
+                                "start": event_date_str,
+                                "backgroundColor": bg_color,
+                                "borderColor": bg_color,
+                                "allDay": True
+                            })
+                    except: pass
+            
             has_more = data.get("has_more", False)
             next_cursor = data.get("next_cursor")
         except: break
-    
+        
+    return events
+
+@st.cache_data(ttl=300) 
+def get_ranking_dataframe():
+    url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
+    members = []
+    has_more = True; next_cursor = None
+    while has_more:
+        payload = {}
+        if next_cursor: payload["start_cursor"] = next_cursor
+        try:
+            res = requests.post(url, json=payload, headers=headers).json()
+            for page in res.get("results", []):
+                props = page["properties"]
+                score = 0
+                sp = props.get("คะแนน Rank SS2") 
+                if sp:
+                    if sp['type'] == 'number': score = sp['number'] or 0
+                    elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
+                    elif sp['type'] == 'formula': score = sp['formula'].get('number', 0) or 0
+                name = ""
+                try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
+                except: pass
+                photo_url = None
+                try: photo_url = props.get("Photo", {}).get("files", [])[0]["external"]["url"]
+                except: pass
+                group = "-"
+                try: group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
+                except: pass
+                title = "-"
+                try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
+                except: pass
+                members.append({ "id": page["id"], "score": score, "name": name, "photo": photo_url, "group": group, "title": title })
+            has_more = res.get("has_more", False)
+            next_cursor = res.get("next_cursor")
+        except: break
     if not members: return pd.DataFrame()
-    
     df = pd.DataFrame(members)
-    # เรียงลำดับ: คะแนนมาก -> น้อย, ชื่อ ก -> ฮ
     df = df.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
-    # ใส่เลขลำดับ
     df.insert(0, 'อันดับ', df.index + 1)
-    
     return df
 
 @st.cache_data(ttl=300)
 def get_participation_stats(user_id):
-    # (ย่อโค้ดส่วนนี้ให้สั้นลง แต่ทำงานเหมือนเดิม)
     all_main_project_ids = set()
     target_start = date(2026, 1, 1)
     target_end = date(2026, 3, 31)
@@ -200,12 +234,12 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
     return requests.patch(url, json={"properties": properties}, headers=headers).status_code == 200
 
 # ================= UI PART =================
-st.set_page_config(page_title="ระบบสมาชิก LSX Ranking", page_icon="🏆", layout="wide") # เพิ่ม layout='wide' ให้แสดง Dashboard กว้างๆ
+st.set_page_config(page_title="ระบบสมาชิก LSX Ranking", page_icon="🏆", layout="wide")
 st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 cookie_manager = stx.CookieManager()
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
-if 'show_leaderboard' not in st.session_state: st.session_state['show_leaderboard'] = False
+if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' # จัดการหน้าจอด้วยตัวแปรเดียว
 
 # Auto Login
 if st.session_state['user_page'] is None:
@@ -236,56 +270,69 @@ if st.session_state['user_page'] is None:
                 st.rerun()
             else: st.error("Login failed")
 
-# --- EDIT PAGE & DASHBOARD ---
+# --- MAIN APP (LOGGED IN) ---
 else:
-    # ถ้ากดเปิด Leaderboard ให้แสดงหน้านี้
-    if st.session_state['show_leaderboard']:
+    # 🏆 MODE 1: LEADERBOARD
+    if st.session_state['view_mode'] == 'leaderboard':
         st.subheader("🏆 Leaderboard: อันดับรวมทั้งหมด")
-        if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว"):
-            st.session_state['show_leaderboard'] = False
+        if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_lb"):
+            st.session_state['view_mode'] = 'profile'
             st.rerun()
         
         with st.spinner("กำลังโหลดข้อมูลอันดับ..."):
             df_leaderboard = get_ranking_dataframe()
-            
             if not df_leaderboard.empty:
-                # เลือกเฉพาะคอลัมน์ที่จะแสดงและเปลี่ยนชื่อให้สวยงาม
-                df_show = df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']]
-                
                 st.dataframe(
-                    df_show,
+                    df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
                     column_config={
-                        "photo": st.column_config.ImageColumn("รูปโปรไฟล์", help="รูปสมาชิก"),
+                        "photo": st.column_config.ImageColumn("รูปโปรไฟล์"),
                         "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"),
                         "name": st.column_config.TextColumn("ชื่อสมาชิก"),
                         "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"),
                         "group": st.column_config.TextColumn("Rank Group"),
                         "title": st.column_config.TextColumn("Rank Title"),
                     },
-                    hide_index=True,
-                    use_container_width=True,
-                    height=600
+                    hide_index=True, use_container_width=True, height=600
                 )
-            else:
-                st.warning("ไม่พบข้อมูลสมาชิก")
-                
+            else: st.warning("ไม่พบข้อมูลสมาชิก")
+            
+    # 📅 MODE 2: CALENDAR (เพิ่มหน้านี้เข้ามา)
+    elif st.session_state['view_mode'] == 'calendar':
+        st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
+        if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_cal"):
+            st.session_state['view_mode'] = 'profile'
+            st.rerun()
+            
+        with st.spinner("กำลังโหลดปฏิทิน..."):
+            events = get_calendar_events()
+            
+            # ตั้งค่าปฏิทินให้เริ่มที่ มกราคม 2026
+            calendar_options = {
+                "headerToolbar": {
+                    "left": "today prev,next",
+                    "center": "title",
+                    "right": "dayGridMonth,listMonth"
+                },
+                "initialDate": "2026-01-01", # 🔥 บังคับให้เริ่มเปิดมาที่ปี 2026
+                "initialView": "dayGridMonth",
+            }
+            
+            calendar(events=events, options=calendar_options)
+
+    # 👤 MODE 3: PROFILE (หน้าหลัก)
     else:
-        # --- หน้าปกติ (PROFILE) ---
         user_page = st.session_state['user_page']
         page_id = user_page['id']
         props = user_page['properties']
         
-        # คำนวณอันดับของตัวเอง
-        with st.spinner(".."):
-            df_all_ranks = get_ranking_dataframe()
-        
+        # Calculate Rank
+        with st.spinner(".."): df_all_ranks = get_ranking_dataframe()
         try:
             my_row = df_all_ranks[df_all_ranks['id'] == page_id].iloc[0]
-            my_rank = my_row['อันดับ']
-            total_members = len(df_all_ranks)
+            my_rank = my_row['อันดับ']; total_members = len(df_all_ranks)
         except: my_rank, total_members = "-", 0
 
-        # ... Get Basic Props ...
+        # Props
         try: current_display = props["ชื่อ"]["title"][0]["text"]["content"]
         except: current_display = ""
         try: current_photo_url = props["Photo"]["files"][0]["external"]["url"]
@@ -310,11 +357,15 @@ else:
             st.markdown(f"**🎖️ Rank SS2:** {rank_ss2}")
             st.metric(label="⭐ คะแนน SS2", value=score_ss2)
             
-            # 🔥 ปุ่มกดดูอันดับ (ทำปุ่มให้ใหญ่และชัดเจน)
             st.markdown("---")
-            st.caption("คลิกปุ่มด้านล่างเพื่อดูตารางรวม")
+            # ปุ่มดูอันดับ
             if st.button(f"🏆 อันดับที่ {my_rank} / {total_members}", use_container_width=True):
-                st.session_state['show_leaderboard'] = True
+                st.session_state['view_mode'] = 'leaderboard'
+                st.rerun()
+
+            # 🔥 ปุ่มดูปฏิทิน (เพิ่มตรงนี้)
+            if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
+                st.session_state['view_mode'] = 'calendar'
                 st.rerun()
 
             with st.spinner(".."):
