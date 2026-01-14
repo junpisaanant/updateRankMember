@@ -1,14 +1,14 @@
 import streamlit as st
 import requests
 import time
+import pandas as pd
 from datetime import datetime, date
 
 # ================= CONFIGURATION =================
 try:
     NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-    IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "0e31066455b60d727553d11e22761846") 
+    IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "") 
 except FileNotFoundError:
-    # แก้ไขให้ปลอดภัย (ไม่ใส่ Key จริงใน Code เผื่อเผลอเอาขึ้น GitHub)
     NOTION_TOKEN = "Please_Check_Secrets_File"
     IMGBB_API_KEY = "Please_Check_Secrets_File"
 
@@ -38,6 +38,75 @@ def get_page_title(page_id):
     except:
         return "Error Loading"
 
+# ================= FUNCTION: CALCULATE RANKING (UPDATED!) =================
+@st.cache_data(ttl=300) 
+def get_ranking_data(current_user_id):
+    """
+    ดึงคะแนนของทุกคนมาเรียงลำดับ:
+    1. คะแนน (มากไปน้อย)
+    2. ชื่อ (ก-ฮ / A-Z)
+    """
+    url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
+    members = []
+    has_more = True
+    next_cursor = None
+    
+    while has_more:
+        payload = {}
+        if next_cursor: payload["start_cursor"] = next_cursor
+        
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code != 200: break
+            data = response.json()
+            
+            for page in data.get("results", []):
+                props = page["properties"]
+                
+                # 1. ดึงคะแนน
+                score = 0
+                score_prop = props.get("คะแนน Rank SS2") 
+                if score_prop:
+                    if score_prop['type'] == 'number':
+                        score = score_prop['number'] or 0
+                    elif score_prop['type'] == 'rollup':
+                        score = score_prop['rollup'].get('number', 0) or 0
+                    elif score_prop['type'] == 'formula':
+                        score = score_prop['formula'].get('number', 0) or 0
+                
+                # 2. ดึงชื่อ (เพื่อเอามาเรียงลำดับกรณีคะแนนเท่ากัน)
+                name = ""
+                try:
+                    name_prop = props.get("ชื่อ", {}).get("title", [])
+                    if name_prop:
+                        name = name_prop[0]["text"]["content"]
+                except: pass
+
+                members.append({
+                    "id": page["id"],
+                    "score": score,
+                    "name": name # เก็บชื่อไว้ด้วย
+                })
+                
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
+        except: break
+    
+    if not members: return "-", "-"
+    
+    df = pd.DataFrame(members)
+    
+    # 🔥 เรียงลำดับตรงนี้: Score (desc), Name (asc)
+    df = df.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+    
+    # หาตำแหน่ง
+    try:
+        rank = df[df['id'] == current_user_id].index[0] + 1
+        total_members = len(df)
+        return rank, total_members
+    except:
+        return "-", len(df)
+
 # ================= FUNCTION: IMGBB UPLOAD =================
 def upload_image_to_imgbb(image_file):
     url = "https://api.imgbb.com/1/upload"
@@ -65,36 +134,29 @@ def check_login(username, password):
         }
     }
     
-    # --- ส่วน Debug (จับผิด) ---
     st.write("🕵️‍♀️ **กำลังตรวจสอบ...**")
-    
     token_preview = NOTION_TOKEN[:4] + "..." if NOTION_TOKEN else "None"
     st.write(f"🔑 ใช้ Token ขึ้นต้นด้วย: `{token_preview}`")
     
     try:
         response = requests.post(url, json=payload, headers=headers)
         data = response.json()
-        
         st.write(f"📡 สถานะการเชื่อมต่อ (Status Code): `{response.status_code}`")
         
         if response.status_code == 401:
-            st.error("❌ Token ไม่ถูกต้อง (Unauthorized) - กรุณาเช็คใน secrets.toml")
+            st.error("❌ Token ไม่ถูกต้อง")
             st.json(data) 
-            
         elif response.status_code == 404:
-            st.error("❌ หา Database ไม่เจอ - อย่าลืม Invite Bot เข้า Database นะคะ!")
-            
+            st.error("❌ หา Database ไม่เจอ")
         elif response.status_code == 200:
             if not data.get('results'):
-                st.warning("⚠️ เชื่อมต่อได้...แต่ค้นหาไม่เจอ (Username/Password อาจผิด)")
-                st.write("Notion ตอบกลับมาว่า:", data)
+                st.warning("⚠️ ไม่พบข้อมูล (Username/Password อาจผิด)")
             else:
                 st.success("✅ Log in สำเร็จ")
                 return data['results'][0]
                 
     except Exception as e:
         st.error(f"💥 โปรแกรม Error: {e}")
-        
     return None
 
 def update_member_info(page_id, new_display_name, new_photo_url, new_password, new_birthday):
@@ -127,7 +189,7 @@ st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 if st.session_state['user_page'] is None:
     with st.form("login_form"):
         st.info("💡 Username คือ id ตามด้วย @lsxrank")
-        st.info("💡 ตรวจสอบ id ได้ที่ >> https://bbxlopburisaraburi.notion.site/2d2e6d24b97d8156a52bd2794a36d90e?v=2d2e6d24b97d81c3bace000c671d914a&source=copy_link")
+        st.info("💡 ตรวจสอบ id ได้ที่ Notion Link")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
@@ -154,23 +216,18 @@ else:
         current_birth = datetime.strptime(birth_str, "%Y-%m-%d").date()
     except: current_birth = None
 
-    # 2. Get Rank Data (เพิ่มส่วนนี้เข้ามาใหม่)
-    # 2.1 Rank Season 2 Group (Formula)
+    # 2. Get Rank Data
     try:
-        # Notion Formula อาจจะ return เป็น string หรือ number ก็ได้
         f_group = props.get("Rank Season 2 Group", {}).get("formula", {})
         rank_group = f_group.get("string") or f_group.get("number") or "-"
     except: rank_group = "-"
 
-    # 2.2 Rank Season 2 (Formula)
     try:
         f_rank = props.get("Rank Season 2", {}).get("formula", {})
         rank_season_2 = f_rank.get("string") or f_rank.get("number") or "-"
     except: rank_season_2 = "-"
 
-    # 2.3 คะแนน Rank SS2 (Rollup)
     try:
-        # Rollup มักจะอยู่ใน key 'number' ถ้าเป็นการ Sum/Average
         score_ss2 = props.get("คะแนน Rank SS2", {}).get("rollup", {}).get("number", 0)
     except: score_ss2 = 0
 
@@ -185,12 +242,25 @@ else:
     with col1:
         st.image(current_photo_url, caption="รูปปัจจุบัน", width=150)
         
-        # เพิ่มการแสดงผล Rank ใต้รูปภาพ
         st.divider()
         st.markdown(f"**🏆 Rank Group:** {rank_group}")
         st.markdown(f"**🎖️ Rank SS2:** {rank_season_2}")
-        # ใช้ st.metric เพื่อให้คะแนนดูเด่นชัด
         st.metric(label="⭐ คะแนน SS2", value=score_ss2)
+        
+        # 🔥 ส่วนแสดงอันดับ (อิงตาม คะแนน -> ชื่อ)
+        with st.spinner("กำลังคำนวณอันดับ..."):
+            my_rank, total_members = get_ranking_data(page_id)
+            
+        st.markdown(
+            f"""
+            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; text-align: center; margin-top: 5px;">
+                <span style="font-size: 14px; color: #555;">อันดับปัจจุบัน</span><br>
+                <span style="font-size: 24px; font-weight: bold; color: #ff4b4b;">{my_rank}</span> 
+                <span style="font-size: 16px; color: #555;">/ {total_members}</span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
 
     # --- COL 2: ฟอร์มแก้ไขข้อมูล ---
     with col2:
@@ -239,6 +309,8 @@ else:
                 if update_member_info(page_id, p_name, p_photo, p_pass, p_birth):
                     st.toast("✅ บันทึกสำเร็จ!")
                     time.sleep(1)
+                    # Clear Cache เพื่อให้ Rank อัปเดตใหม่ถ้ามีการแก้ข้อมูลที่กระทบ
+                    get_ranking_data.clear() 
                     st.session_state['user_page'] = None
                     st.rerun()
                 else: st.error("บันทึก Notion ล้มเหลว")
