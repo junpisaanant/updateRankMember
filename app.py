@@ -133,6 +133,7 @@ st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 if st.session_state['user_page'] is None:
     with st.form("login_form"):
         st.info("💡 Username คือ id ตามด้วย @lsxrank")
+        st.info("💡 ตรวจสอบ id ได้ที่ >> https://bbxlopburisaraburi.notion.site/2d2e6d24b97d8156a52bd2794a36d90e?v=2d2e6d24b97d81c3bace000c671d914a&source=copy_link")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         if st.form_submit_button("Login"):
@@ -244,5 +245,6 @@ else:
     if st.button("Logout"):
         st.session_state['user_page'] = None
         st.rerun()
+
 
 
