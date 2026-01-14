@@ -54,7 +54,6 @@ def upload_image_to_imgbb(image_file):
     return None
 
 # ================= FUNCTION: NOTION LOGIN =================
-# ก๊อปไปวางทับฟังก์ชัน check_login เดิม
 def check_login(username, password):
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
     payload = {
@@ -69,27 +68,22 @@ def check_login(username, password):
     # --- ส่วน Debug (จับผิด) ---
     st.write("🕵️‍♀️ **กำลังตรวจสอบ...**")
     
-    # 1. เช็คว่าใช้ Token ตัวไหน (โชว์แค่ 4 ตัวหน้าพอ เพื่อความปลอดภัย)
     token_preview = NOTION_TOKEN[:4] + "..." if NOTION_TOKEN else "None"
     st.write(f"🔑 ใช้ Token ขึ้นต้นด้วย: `{token_preview}`")
     
-    # 2. ลองยิงไปหา Notion
     try:
         response = requests.post(url, json=payload, headers=headers)
         data = response.json()
         
         st.write(f"📡 สถานะการเชื่อมต่อ (Status Code): `{response.status_code}`")
         
-        # ถ้า Error 401 = Token ผิด/ไม่มีสิทธิ์
         if response.status_code == 401:
             st.error("❌ Token ไม่ถูกต้อง (Unauthorized) - กรุณาเช็คใน secrets.toml")
-            st.json(data) # โชว์ข้อความฟ้องจาก Notion
+            st.json(data) 
             
-        # ถ้า Error 404 = Database ID ผิด หรือ บอทหาห้องไม่เจอ
         elif response.status_code == 404:
             st.error("❌ หา Database ไม่เจอ - อย่าลืม Invite Bot เข้า Database นะคะ!")
             
-        # ถ้า 200 (สำเร็จ) แต่หาUserไม่เจอ
         elif response.status_code == 200:
             if not data.get('results'):
                 st.warning("⚠️ เชื่อมต่อได้...แต่ค้นหาไม่เจอ (Username/Password อาจผิด)")
@@ -150,7 +144,7 @@ else:
     page_id = user_page['id']
     props = user_page['properties']
     
-    # Get Current Data
+    # 1. Get Current Basic Data
     try: current_display = props["ชื่อ"]["title"][0]["text"]["content"]
     except: current_display = ""
     try: current_photo_url = props["Photo"]["files"][0]["external"]["url"]
@@ -160,28 +154,58 @@ else:
         current_birth = datetime.strptime(birth_str, "%Y-%m-%d").date()
     except: current_birth = None
 
-    # Get Relations
+    # 2. Get Rank Data (เพิ่มส่วนนี้เข้ามาใหม่)
+    # 2.1 Rank Season 2 Group (Formula)
+    try:
+        # Notion Formula อาจจะ return เป็น string หรือ number ก็ได้
+        f_group = props.get("Rank Season 2 Group", {}).get("formula", {})
+        rank_group = f_group.get("string") or f_group.get("number") or "-"
+    except: rank_group = "-"
+
+    # 2.2 Rank Season 2 (Formula)
+    try:
+        f_rank = props.get("Rank Season 2", {}).get("formula", {})
+        rank_season_2 = f_rank.get("string") or f_rank.get("number") or "-"
+    except: rank_season_2 = "-"
+
+    # 2.3 คะแนน Rank SS2 (Rollup)
+    try:
+        # Rollup มักจะอยู่ใน key 'number' ถ้าเป็นการ Sum/Average
+        score_ss2 = props.get("คะแนน Rank SS2", {}).get("rollup", {}).get("number", 0)
+    except: score_ss2 = 0
+
+    # 3. Get Relations
     rank_history_ids = [r['id'] for r in props.get("สถิติการลง Rank ทั้งหมด", {}).get("relation", [])]
     reward_history_ids = [r['id'] for r in props.get("อันดับ 1-4 SS1", {}).get("relation", [])]
 
+    # --- UI Layout ---
     col1, col2 = st.columns([1, 2])
+    
+    # --- COL 1: รูปภาพและ Rank ---
     with col1:
         st.image(current_photo_url, caption="รูปปัจจุบัน", width=150)
+        
+        # เพิ่มการแสดงผล Rank ใต้รูปภาพ
+        st.divider()
+        st.markdown(f"**🏆 Rank Group:** {rank_group}")
+        st.markdown(f"**🎖️ Rank SS2:** {rank_season_2}")
+        # ใช้ st.metric เพื่อให้คะแนนดูเด่นชัด
+        st.metric(label="⭐ คะแนน SS2", value=score_ss2)
 
+    # --- COL 2: ฟอร์มแก้ไขข้อมูล ---
     with col2:
         st.subheader("📝 แก้ไขข้อมูล")
         
         new_display = st.text_input("Display Name", value=current_display)
         
-        # --- ⚠️ แก้ไขตรงนี้: เพิ่ม min_value ให้เลือกปีย้อนหลังได้ถึง 1900 ---
         min_date = date(1900, 1, 1)
         max_date = date.today()
         
         new_birth_input = st.date_input(
             "วันเกิด (Birthday)", 
             value=current_birth if current_birth else max_date,
-            min_value=min_date, # อนุญาตให้เลือกได้ตั้งแต่ปี 1900
-            max_value=max_date  # ห้ามเลือกเกินวันปัจจุบัน
+            min_value=min_date, 
+            max_value=max_date 
         )
         
         st.markdown("---")
@@ -245,6 +269,3 @@ else:
     if st.button("Logout"):
         st.session_state['user_page'] = None
         st.rerun()
-
-
-
