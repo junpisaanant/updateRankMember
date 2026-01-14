@@ -127,7 +127,7 @@ st.set_page_config(page_title="ระบบสมาชิก LSX Ranking", page
 if 'user_page' not in st.session_state:
     st.session_state['user_page'] = None
 
-st.title("🧙‍♀️ ข้อมูลสมาชิก")
+st.title("🧙‍♀️ ระบบสมาชิก LSX Ranking")
 
 # --- LOGIN ---
 if st.session_state['user_page'] is None:
@@ -244,4 +244,5 @@ else:
     if st.button("Logout"):
         st.session_state['user_page'] = None
         st.rerun()
+
 
