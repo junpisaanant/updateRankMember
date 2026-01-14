@@ -38,11 +38,10 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-# 🔥 ฟังก์ชันใหม่: ดึงข้อมูลปฏิทิน (แสดงทุกงาน + บอกประเภท)
+# 🔥 ฟังก์ชันดึงข้อมูลปฏิทิน (ฉบับแก้ไข: ใช้ URL แบบ Native)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
-    # กำหนดช่วงวันที่ (Q1 2026)
     target_start = date(2026, 1, 1)
     target_end = date(2026, 3, 31)
     
@@ -60,49 +59,51 @@ def get_calendar_events():
             for page in data.get("results", []):
                 props = page.get('properties', {})
                 
-                # 1. ชื่อกิจกรรม
+                # 1. ชื่อ + ประเภท
                 title = "Unknown Event"
                 try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                # 2. ประเภทงาน
                 event_type = "ทั่วไป"
                 if 'ประเภทงาน' in props:
                     pt = props['ประเภทงาน']
                     if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
                     elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
                 
-                # 3. วันที่
+                # 2. วันที่
                 event_date_str = None
                 date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                 if date_prop: event_date_str = date_prop.get("date", {}).get("start")
                 
-                # 4. Logic: เอาทุกงานในช่วงเวลาที่กำหนด (ไม่กรองงานย่อยทิ้งแล้ว)
+                # 3. URL
+                event_url = ""
+                try: 
+                    url_prop = props.get("URL")
+                    if url_prop: event_url = url_prop.get("url", "")
+                except: pass
+
                 if event_date_str:
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
                         if target_start <= e_date <= target_end:
-                            
-                            # กำหนดสีตามประเภทงาน
-                            bg_color = "#FF4B4B" # สีแดง (ค่าเริ่มต้น/งานหลัก)
-                            if "งานย่อย" in str(event_type):
-                                bg_color = "#708090" # สีเทา (SlateGray) สำหรับงานย่อย
-                            elif "งานใหญ่" in str(event_type):
-                                bg_color = "#FFD700" # สีทอง สำหรับงานใหญ่
+                            bg_color = "#FF4B4B"
+                            if "งานย่อย" in str(event_type): bg_color = "#708090"
+                            elif "งานใหญ่" in str(event_type): bg_color = "#FFD700"
                             
                             events.append({
-                                "title": f"[{event_type}] {title}", # ✅ ใส่ประเภทงานนำหน้าชื่อ
+                                "title": f"[{event_type}] {title}",
                                 "start": event_date_str,
                                 "backgroundColor": bg_color,
                                 "borderColor": bg_color,
-                                "allDay": True
+                                "allDay": True,
+                                # ✅ ใส่ URL ไว้ตรงนี้เลย (FullCalendar จะทำให้เป็นลิงก์ให้อัตโนมัติ)
+                                "url": event_url if event_url else "" 
                             })
                     except: pass
             
             has_more = data.get("has_more", False)
             next_cursor = data.get("next_cursor")
         except: break
-        
     return events
 
 @st.cache_data(ttl=300) 
@@ -296,9 +297,13 @@ else:
                 )
             else: st.warning("ไม่พบข้อมูลสมาชิก")
             
-    # 📅 MODE 2: CALENDAR (เพิ่มหน้านี้เข้ามา)
+    # 📅 MODE 2: CALENDAR
     elif st.session_state['view_mode'] == 'calendar':
         st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
+        
+        # ใส่คำแนะนำการใช้งานให้ user นิดนึง
+        st.caption("💡 ทริค: กด **Ctrl + คลิก** ที่กิจกรรม เพื่อเปิดลิงก์ในแท็บใหม่") 
+        
         if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_cal"):
             st.session_state['view_mode'] = 'profile'
             st.rerun()
@@ -306,17 +311,18 @@ else:
         with st.spinner("กำลังโหลดปฏิทิน..."):
             events = get_calendar_events()
             
-            # ตั้งค่าปฏิทินให้เริ่มที่ มกราคม 2026
+            # ตั้งค่าปฏิทินแบบคลีนๆ (ไม่มี JavaScript มากวนใจแล้ว)
             calendar_options = {
                 "headerToolbar": {
                     "left": "today prev,next",
                     "center": "title",
                     "right": "dayGridMonth,listMonth"
                 },
-                "initialDate": "2026-01-01", # 🔥 บังคับให้เริ่มเปิดมาที่ปี 2026
+                "initialDate": "2026-01-01",
                 "initialView": "dayGridMonth",
             }
             
+            # ✅ ไม่ต้องมี callbacks แล้ว
             calendar(events=events, options=calendar_options)
 
     # 👤 MODE 3: PROFILE (หน้าหลัก)
