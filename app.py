@@ -38,7 +38,7 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-# 🔥 ฟังก์ชันดึงข้อมูลปฏิทิน (ฉบับแก้ไข: ใช้ URL แบบ Native)
+# 🔥 ฟังก์ชันดึงข้อมูลปฏิทิน (ฉบับแก้ไข: ย้าย URL ไปซ่อน เพื่อใช้กับ Dialog)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -96,8 +96,10 @@ def get_calendar_events():
                                 "backgroundColor": bg_color,
                                 "borderColor": bg_color,
                                 "allDay": True,
-                                # ✅ ใส่ URL ไว้ตรงนี้เลย (FullCalendar จะทำให้เป็นลิงก์ให้อัตโนมัติ)
-                                "url": event_url if event_url else "" 
+                                # ⚠️ ย้าย URL มาเก็บใน extendedProps (สำคัญมาก!)
+                                "extendedProps": {
+                                    "url": event_url if event_url else "#"
+                                }
                             })
                     except: pass
             
@@ -299,19 +301,30 @@ else:
             
     # 📅 MODE 2: CALENDAR
     elif st.session_state['view_mode'] == 'calendar':
-        st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
         
-        # ใส่คำแนะนำการใช้งานให้ user นิดนึง
-        st.caption("💡 ทริค: กด **Ctrl + คลิก** ที่กิจกรรม เพื่อเปิดลิงก์ในแท็บใหม่") 
+        # 1. สร้างตัวแปรกันลืม
+        if 'last_clicked_event' not in st.session_state:
+            st.session_state['last_clicked_event'] = None
+
+        # 2. สร้างฟังก์ชัน Popup (เอาปุ่มปิดออกแล้ว)
+        @st.dialog("รายละเอียดกิจกรรม")
+        def show_event_popup(title, url):
+            st.write(f"คุณต้องการเปิดหน้าเว็บของงาน **{title}** หรือไม่?")
+            st.write("") 
+            
+            # เหลือแค่ปุ่มเดียว เต็มความกว้าง
+            st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
+
+        st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
         
         if st.button("⬅️ กลับหน้าข้อมูลส่วนตัว", key="back_cal"):
             st.session_state['view_mode'] = 'profile'
+            st.session_state['last_clicked_event'] = None
             st.rerun()
             
         with st.spinner("กำลังโหลดปฏิทิน..."):
             events = get_calendar_events()
             
-            # ตั้งค่าปฏิทินแบบคลีนๆ (ไม่มี JavaScript มากวนใจแล้ว)
             calendar_options = {
                 "headerToolbar": {
                     "left": "today prev,next",
@@ -322,8 +335,24 @@ else:
                 "initialView": "dayGridMonth",
             }
             
-            # ✅ ไม่ต้องมี callbacks แล้ว
-            calendar(events=events, options=calendar_options)
+            # รับค่าจากปฏิทิน
+            cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'])
+            
+            # 🔥 Logic เช็คการคลิก
+            if cal_data.get("callback") == "eventClick":
+                current_click_data = cal_data["eventClick"]["event"]
+                
+                # เช็คว่าเป็นคลิกใหม่หรือไม่
+                if current_click_data != st.session_state['last_clicked_event']:
+                    st.session_state['last_clicked_event'] = current_click_data
+                    
+                    clicked_title = current_click_data["title"]
+                    clicked_url = current_click_data.get("extendedProps", {}).get("url")
+                    
+                    if clicked_url and clicked_url != "#":
+                        show_event_popup(clicked_title, clicked_url)
+                    else:
+                        st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
 
     # 👤 MODE 3: PROFILE (หน้าหลัก)
     else:
