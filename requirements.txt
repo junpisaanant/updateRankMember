@@ -2,3 +2,4 @@ streamlit
 pandas
 requests
 extra-streamlit-components
+streamlit-calendar
