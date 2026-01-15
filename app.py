@@ -632,7 +632,7 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
     
-    # --- ส่วน Dialog (เหมือนเดิม) ---
+    # --- ส่วน Dialog (Popup) ---
     if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
     @st.dialog("รายละเอียดกิจกรรม")
     def show_event_popup(title, url):
@@ -644,46 +644,48 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
         
-        # 🔍 [DEBUG] เช็คว่าข้อมูลมาจริงไหม (ถ้า Cloud มองไม่เห็น Token จะขึ้นเตือนตรงนี้)
-        if not events:
-            st.warning("⚠️ ไม่พบข้อมูลกิจกรรม (หรือเชื่อมต่อ Notion ไม่ได้)")
-        
-        # ⚙️ ตั้งค่าปฏิทิน
+        # ⚙️ ตั้งค่าปฏิทิน (เพิ่ม height="700px" เพื่อบังคับความสูง)
         calendar_options = { 
             "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
             "initialDate": "2026-01-01", 
             "initialView": "dayGridMonth",
-            "height": "650px" # ✅ บังคับความสูง แก้ปัญหาจอขาวบน Cloud
+            "height": "700px",  # ✅ สำคัญ: บังคับความสูง ป้องกันปฏิทินหดเหลือ 0
+            "contentHeight": "auto"
         }
         
-        # 🎨 ส่วนแสดงผล (เพิ่ม key และ custom_css)
+        # 🛡️ สร้าง Key แบบสุ่มตามเวลา เพื่อบังคับให้สร้างปฏิทินใหม่ทุกครั้งที่โหลดหน้านี้
+        # (ช่วยแก้ปัญหา กดมาจากเมนูซ้ายแล้วจอขาว)
+        if 'cal_reset_key' not in st.session_state: st.session_state['cal_reset_key'] = 0
+        
+        # 🎨 แสดงผลปฏิทิน
         try:
             cal_data = calendar(
                 events=events, 
                 options=calendar_options, 
                 callbacks=['eventClick'], 
-                key=f"calendar_v2_{len(events)}", # ✅ เปลี่ยน Key ตามจำนวน event เพื่อบังคับ render ใหม่
+                # ✅ ใช้ Key ผสมกับชื่อเมนู เพื่อให้มันรู้ว่าเป็นคนละตัวกับหน้าอื่น
+                key=f"calendar_main_view_{st.session_state['cal_reset_key']}", 
                 custom_css="""
-                .fc { background-color: #ffffff; padding: 10px; border-radius: 10px; }
+                .fc { background-color: #ffffff; padding: 10px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+                .fc-event { cursor: pointer; }
                 """
             )
             
             # 🖱️ Logic คลิกแล้วเด้ง Popup
             if cal_data.get("callback") == "eventClick":
                 current_click_data = cal_data["eventClick"]["event"]
-                # เช็คว่าคลิกใหม่ หรือคลิกซ้ำ (ป้องกันเด้งรัวๆ)
                 if current_click_data != st.session_state['last_clicked_event']:
                     st.session_state['last_clicked_event'] = current_click_data
                     clicked_title = current_click_data["title"]
                     clicked_url = current_click_data.get("extendedProps", {}).get("url")
+                    
                     if clicked_url and clicked_url != "#": 
                         show_event_popup(clicked_title, clicked_url)
                     else: 
                         st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
                         
         except Exception as e:
-            st.error(f"❌ เกิดข้อผิดพลาดในการแสดงปฏิทิน: {e}")
-            st.write(events) # ถ้าพัง ให้โชว์ข้อมูลดิบออกมาดู
+            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
 
 # 📸 PAGE: GALLERY
 elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
