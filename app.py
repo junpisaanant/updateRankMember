@@ -14,10 +14,10 @@ except FileNotFoundError:
     NOTION_TOKEN = "Please_Check_Secrets_File"
     IMGBB_API_KEY = "Please_Check_Secrets_File"
 
-# 📌 ใส่ ID ให้ครบถ้วน
+# 📌 ID
 MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09" 
 PROJECT_DB_ID = "26fe6d24b97d80e1bdb3c2452a31694c"
-NEWS_DB_ID = "2e9e6d24b97d80388805c0b6c1906464" 
+NEWS_DB_ID = "280e6d24b97d806fa7c8e8bd4ca717f8" 
 
 # วันปิดรับสมัคร
 REGISTRATION_DEADLINE = datetime(2026, 1, 18, 23, 59, 59)
@@ -56,15 +56,17 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ปรับปรุง: รับ parameter limit ได้
+# 🔥 ฟังก์ชันดึงข่าว (รองรับ Limit และดึง ID มาใช้)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5):
     if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
+    
     payload = {
         "page_size": limit, 
-        "sorts": [ { "timestamp": "created_time", "direction": "descending" } ]
+        "sorts": [ { "property": "วันที่ประกาศ", "direction": "descending" } ]
     }
+    
     news_list = []
     try:
         res = requests.post(url, json=payload, headers=headers)
@@ -72,24 +74,37 @@ def get_latest_news(limit=5):
             data = res.json()
             for page in data.get("results", []):
                 props = page.get("properties", {})
+                
                 topic = "ไม่มีหัวข้อ"
                 try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
+                
                 content = "-"
                 try: 
                     content_list = props.get("เนื้อหา", {}).get("rich_text", [])
                     content = "".join([t["text"]["content"] for t in content_list])
                 except: pass
+                
                 link = None
                 try: link = props.get("URL", {}).get("url")
                 except: pass
-                created_date = "Unknown Date"
+                
+                show_date = "Unknown Date"
                 try: 
-                    c_time = page.get("created_time")
-                    dt = datetime.strptime(c_time, "%Y-%m-%dT%H:%M:%S.%fZ")
-                    created_date = dt.strftime("%d/%m/%Y")
+                    d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
+                    if d_str:
+                        d_obj = datetime.strptime(d_str, "%Y-%m-%d")
+                        show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
-                news_list.append({ "topic": topic, "content": content, "url": link, "date": created_date })
+                
+                # ✅ เก็บ ID ไว้ใช้ทำ key ของปุ่ม
+                news_list.append({ 
+                    "id": page["id"],
+                    "topic": topic, 
+                    "content": content, 
+                    "url": link, 
+                    "date": show_date 
+                })
     except: pass
     return news_list
 
@@ -209,14 +224,12 @@ def get_upcoming_event():
             props = page.get('properties', {})
             title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
             d_str = props.get("วันที่จัดกิจกรรม", {}).get("date", {}).get("start")
-            
             event_type = "ทั่วไป"
             if 'ประเภทงาน' in props:
                 pt = props['ประเภทงาน']
                 if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
                 elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
             
-            # ✅ ดึง URL
             event_url = ""
             try: event_url = props.get("URL", {}).get("url", "")
             except: pass
@@ -368,7 +381,7 @@ st.title("🏆LSX Ranking")
 cookie_manager = stx.CookieManager()
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
-if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' 
+if 'selected_menu' not in st.session_state: st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
 if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
 
 if st.session_state['user_page'] is None:
@@ -390,17 +403,30 @@ with st.sidebar:
         except: user_name = "Member"
         st.success(f"👤 {user_name}")
     
-    # 🔥 เพิ่มเมนู "📢 ประกาศ/ข่าวสาร"
-    selected_menu = st.radio("ไปยังหน้า:", 
-        ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
-    )
+    # 🔥 Logic: เปลี่ยนหน้าผ่าน session_state เพื่อให้ปุ่มอ่านต่อทำงานได้
+    # ใช้ index ในการกำหนดค่า Default ของ Radio
+    menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
+    
+    # กัน Error กรณีค่าใน State ไม่อยู่ใน List
+    try:
+        default_index = menu_options.index(st.session_state['selected_menu'])
+    except ValueError:
+        default_index = 0
+        
+    selected_menu = st.radio("ไปยังหน้า:", menu_options, index=default_index)
+    
+    # อัปเดต State เมื่อกดเลือกเอง
+    if selected_menu != st.session_state['selected_menu']:
+        st.session_state['selected_menu'] = selected_menu
+        st.rerun()
+
     st.write("---")
     st.caption("LSX Ranking System v2.0")
 
 # ================= PAGE CONTENT =================
 
 # 🏠 PAGE: DASHBOARD
-if selected_menu == "🏠 หน้าแรก (Dashboard)":
+if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)":
     st.header("🏠 หน้าแรก (Dashboard)")
     col_d1, col_d2 = st.columns([2, 1])
     
@@ -440,18 +466,29 @@ if selected_menu == "🏠 หน้าแรก (Dashboard)":
             else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
         
         st.write("")
-        st.subheader("📢 ประกาศ/ข่าวสาร")
+        st.subheader("📢 ประกาศล่าสุด")
         with st.spinner("กำลังโหลดข่าว..."):
-            news_items = get_latest_news(limit=3) # ดึงแค่ 3 ข่าวล่าสุดพอในหน้าแรก
+            # 🔥 ดึงแค่ 1 ข่าวล่าสุด
+            news_items = get_latest_news(limit=1)
             if news_items:
                 for item in news_items:
                     with st.container(border=True):
-                        # 🔥 ทำให้หัวข้อคลิกได้
-                        if item['url']: st.markdown(f"**[{item['topic']}]({item['url']})**")
-                        else: st.markdown(f"**{item['topic']}**")
+                        st.markdown(f"**{item['topic']}**")
                         
-                        st.caption(f"{item['date']} - {item['content']}")
-                        if item['url']: st.link_button("อ่านต่อ 🔗", item['url'])
+                        # 🔥 แสดงเนื้อหาย่อ 150 ตัวอักษร
+                        short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                        st.write(short_content)
+                        st.caption(f"🗓️ {item['date']}")
+                        
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            # 🔥 ปุ่มอ่านต่อ -> ไปหน้าข่าว
+                            if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
+                                st.session_state['selected_menu'] = "📢 ประกาศ/ข่าวสาร"
+                                st.rerun()
+                        with c2:
+                            # 🔥 ปุ่ม Link ต้นทาง
+                            if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
             else: st.info("ไม่มีประกาศใหม่")
             
         st.write("")
@@ -460,14 +497,12 @@ if selected_menu == "🏠 หน้าแรก (Dashboard)":
         if gallery:
             latest = gallery[0]
             with st.container(border=True):
-                # 🔥 ทำให้คลิกรูปแล้วไปอัลบั้มได้ (ผ่าน Link Button ด้านล่าง หรือใช้ HTML hack)
-                # Streamlit Image ไม่ support click โดยตรง -> ใช้ Link Button ชัดเจนสุด
                 st.image(latest['photo_url'], use_container_width=True)
                 st.caption(f"{latest['title']} ({latest['date_str']})")
                 st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
 
 # 🏆 PAGE: LEADERBOARD
-elif selected_menu == "🏆 ตารางอันดับ":
+elif st.session_state['selected_menu'] == "🏆 ตารางอันดับ":
     st.subheader("🏆 Leaderboard: อันดับรวมทั้งหมด")
     with st.spinner("กำลังโหลดข้อมูลอันดับ..."):
         df_leaderboard = get_ranking_dataframe()
@@ -477,29 +512,31 @@ elif selected_menu == "🏆 ตารางอันดับ":
                 hide_index=True, use_container_width=True, height=600)
         else: st.warning("ไม่พบข้อมูลสมาชิก")
 
-# 📢 PAGE: NEWS (ใหม่)
-elif selected_menu == "📢 ประกาศ/ข่าวสาร":
+# 📢 PAGE: NEWS (FULL)
+elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าวสาร":
     st.subheader("📢 ประกาศและข่าวสารทั้งหมด")
     with st.spinner("กำลังโหลดข่าวสาร..."):
-        all_news = get_latest_news(limit=50) # ดึงเยอะๆ
+        all_news = get_latest_news(limit=50)
         if all_news:
             for item in all_news:
                 with st.container(border=True):
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        if item['url']: st.markdown(f"### [{item['topic']}]({item['url']})")
-                        else: st.markdown(f"### {item['topic']}")
-                        st.caption(f"🗓️ {item['date']}")
+                    st.markdown(f"### {item['topic']}")
+                    st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
+                    st.markdown("---")
+                    
+                    # 🔥 แสดงเนื้อหาย่อ + Expander อ่านเต็ม
+                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                    st.write(short_content)
+                    
+                    with st.expander("📖 อ่านเนื้อหาเต็ม"):
                         st.write(item['content'])
-                    with c2:
                         if item['url']: 
-                            st.write("")
-                            st.link_button("🔗 อ่านต่อ", item['url'])
-        else:
-            st.info("ยังไม่มีประกาศ")
+                            st.markdown("---")
+                            st.link_button("🔗 ไปยัง link ต้นทาง", item['url'], type="primary")
+        else: st.info("ยังไม่มีประกาศ")
 
 # 📅 PAGE: CALENDAR
-elif selected_menu == "📅 ปฏิทินกิจกรรม":
+elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
     if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
     @st.dialog("รายละเอียดกิจกรรม")
@@ -522,7 +559,7 @@ elif selected_menu == "📅 ปฏิทินกิจกรรม":
                 else: st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
 
 # 📸 PAGE: GALLERY
-elif selected_menu == "📸 แกลเลอรี":
+elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
     st.subheader("📸 แกลเลอรีรูปภาพกิจกรรม")
     with st.spinner("กำลังโหลดรูปภาพ..."):
         gallery_items = get_photo_gallery()
@@ -537,7 +574,7 @@ elif selected_menu == "📸 แกลเลอรี":
                         st.link_button("🖼️ ดูอัลบั้มรูป", item['photo_url'], use_container_width=True)
 
 # 🔐 PAGE: MEMBER SYSTEM
-elif selected_menu == "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว":
+elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว":
     
     if st.session_state['user_page'] is None:
         
@@ -668,10 +705,10 @@ elif selected_menu == "🔐 ระบบสมาชิก / ข้อมูล�
             
             st.markdown("---")
             if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
-                st.session_state['view_mode'] = 'leaderboard'; selected_menu="🏆 ตารางอันดับ"; st.rerun() 
+                st.session_state['selected_menu'] = '🏆 ตารางอันดับ'; st.rerun() 
             
             if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
-                st.session_state['view_mode'] = 'calendar'; selected_menu="📅 ปฏิทินกิจกรรม"; st.rerun()
+                st.session_state['selected_menu'] = '📅 ปฏิทินกิจกรรม'; st.rerun()
             
             st.markdown("---")
             st.markdown("**🔥 สถิติการเข้าร่วม**")
