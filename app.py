@@ -640,10 +640,20 @@ else:
 
         st.markdown("---")
         if st.button("Logout"):
-            cookie_manager.delete("lsx_user_id") 
+            # 🔥 แก้ไข: ใส่ try-except กัน Error กรณีหา Cookie ไม่เจอ
+            try:
+                cookie_manager.delete("lsx_user_id") 
+            except KeyError:
+                pass # ถ้าไม่มี Cookie อยู่แล้ว ก็ข้ามไปเลย ไม่ต้อง Error
+            except Exception as e:
+                print(f"Cookie Error: {e}")
+
+            # เคลียร์ค่าใน Session
             st.session_state['user_page'] = None
+            st.session_state['auth_mode'] = 'login' # รีเซ็ตกลับไปหน้า Login
+            
             st.toast("👋 กำลังออกจากระบบ...")
-            time.sleep(2)
+            time.sleep(1.5)
             st.rerun()
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
