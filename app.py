@@ -56,7 +56,7 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ฟังก์ชันดึงข่าว (รองรับ Limit และดึง ID มาใช้)
+# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: ดึงประเภทและรูปภาพ)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5):
     if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
@@ -96,14 +96,35 @@ def get_latest_news(limit=5):
                         d_obj = datetime.strptime(d_str, "%Y-%m-%d")
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
+
+                # ✅ ดึงประเภท (Category)
+                category = "ข่าวสาร"
+                try:
+                    cat_prop = props.get("ประเภท")
+                    if cat_prop['type'] == 'select' and cat_prop['select']:
+                        category = cat_prop['select']['name']
+                    elif cat_prop['type'] == 'multi_select' and cat_prop['multi_select']:
+                        category = cat_prop['multi_select'][0]['name']
+                except: pass
+
+                # ✅ ดึงรูปภาพประกอบ (Image)
+                image_url = None
+                try:
+                    img_files = props.get("ภาพประกอบ", {}).get("files", [])
+                    if img_files:
+                        first_file = img_files[0]
+                        if first_file['type'] == 'external': image_url = first_file['external']['url']
+                        elif first_file['type'] == 'file': image_url = first_file['file']['url']
+                except: pass
                 
-                # ✅ เก็บ ID ไว้ใช้ทำ key ของปุ่ม
                 news_list.append({ 
                     "id": page["id"],
                     "topic": topic, 
                     "content": content, 
                     "url": link, 
-                    "date": show_date 
+                    "date": show_date,
+                    "category": category,
+                    "image_url": image_url
                 })
     except: pass
     return news_list
@@ -207,7 +228,6 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 ปรับปรุง: ดึง URL มาด้วย
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
@@ -395,6 +415,28 @@ if st.session_state['user_page'] is None:
             try: cookie_manager.delete("lsx_user_id")
             except: pass
 
+# ✅ DIALOG FUNCION: News Popup
+@st.dialog("📰 รายละเอียดข่าวสาร")
+def show_news_popup(item):
+    st.subheader(item['topic'])
+    
+    # Category Display (Red if announcement)
+    cat_style = "color: red; font-weight: bold;" if "ประกาศ" in item['category'] else "color: gray;"
+    st.markdown(f"🗓️ {item['date']} | 🏷️ <span style='{cat_style}'>{item['category']}</span>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Image Display
+    if item['image_url']:
+        st.image(item['image_url'], use_container_width=True)
+        st.write("")
+        
+    st.write(item['content'])
+    
+    if item['url']:
+        st.markdown("---")
+        st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
+
 # ================= SIDEBAR =================
 with st.sidebar:
     st.header("📌 เมนูหลัก")
@@ -403,11 +445,8 @@ with st.sidebar:
         except: user_name = "Member"
         st.success(f"👤 {user_name}")
     
-    # 🔥 Logic: เปลี่ยนหน้าผ่าน session_state เพื่อให้ปุ่มอ่านต่อทำงานได้
-    # ใช้ index ในการกำหนดค่า Default ของ Radio
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
-    # กัน Error กรณีค่าใน State ไม่อยู่ใน List
     try:
         default_index = menu_options.index(st.session_state['selected_menu'])
     except ValueError:
@@ -415,7 +454,6 @@ with st.sidebar:
         
     selected_menu = st.radio("ไปยังหน้า:", menu_options, index=default_index)
     
-    # อัปเดต State เมื่อกดเลือกเอง
     if selected_menu != st.session_state['selected_menu']:
         st.session_state['selected_menu'] = selected_menu
         st.rerun()
@@ -447,7 +485,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             next_event = get_upcoming_event()
             if next_event:
                 with st.container(border=True):
-                    # 🔥 ถ้ามี URL ให้เป็น Link
                     if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
                     else: st.markdown(f"### {next_event['title']}")
                     
@@ -468,26 +505,26 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
         st.write("")
         st.subheader("📢 ประกาศล่าสุด")
         with st.spinner("กำลังโหลดข่าว..."):
-            # 🔥 ดึงแค่ 1 ข่าวล่าสุด
             news_items = get_latest_news(limit=1)
             if news_items:
                 for item in news_items:
                     with st.container(border=True):
                         st.markdown(f"**{item['topic']}**")
                         
-                        # 🔥 แสดงเนื้อหาย่อ 150 ตัวอักษร
+                        # Show Category
+                        cat_color = "red" if "ประกาศ" in item['category'] else "gray"
+                        st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
+                        
                         short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
                         st.write(short_content)
                         st.caption(f"🗓️ {item['date']}")
                         
                         c1, c2 = st.columns(2)
                         with c1:
-                            # 🔥 ปุ่มอ่านต่อ -> ไปหน้าข่าว
+                            # ✅ แก้ไข: เปิด Dialog
                             if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
-                                st.session_state['selected_menu'] = "📢 ประกาศ/ข่าวสาร"
-                                st.rerun()
+                                show_news_popup(item)
                         with c2:
-                            # 🔥 ปุ่ม Link ต้นทาง
                             if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
             else: st.info("ไม่มีประกาศใหม่")
             
@@ -520,19 +557,23 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
         if all_news:
             for item in all_news:
                 with st.container(border=True):
-                    st.markdown(f"### {item['topic']}")
+                    c_head, c_cat = st.columns([3, 1])
+                    with c_head: st.markdown(f"### {item['topic']}")
+                    with c_cat:
+                        # ✅ แสดง Category (แดงถ้าเป็นประกาศ)
+                        cat_color = "#FF4B4B" if "ประกาศ" in item['category'] else "#808080"
+                        st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
+                    
                     st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
                     st.markdown("---")
                     
-                    # 🔥 แสดงเนื้อหาย่อ + Expander อ่านเต็ม
-                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                    short_content = (item['content'][:200] + '...') if len(item['content']) > 200 else item['content']
                     st.write(short_content)
                     
-                    with st.expander("📖 อ่านเนื้อหาเต็ม"):
-                        st.write(item['content'])
-                        if item['url']: 
-                            st.markdown("---")
-                            st.link_button("🔗 ไปยัง link ต้นทาง", item['url'], type="primary")
+                    # ✅ แก้ไข: ปุ่มเปิด Dialog
+                    if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"news_full_{item['id']}"):
+                        show_news_popup(item)
+
         else: st.info("ยังไม่มีประกาศ")
 
 # 📅 PAGE: CALENDAR
