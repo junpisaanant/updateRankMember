@@ -56,9 +56,9 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: รองรับหลายรูปภาพ)
+# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: รองรับการกรอง Category)
 @st.cache_data(ttl=300)
-def get_latest_news(limit=5):
+def get_latest_news(limit=5, category_filter=None):
     if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
     
@@ -75,6 +75,20 @@ def get_latest_news(limit=5):
             for page in data.get("results", []):
                 props = page.get("properties", {})
                 
+                # ✅ ดึงประเภท (Category)
+                category = "ข่าวสาร"
+                try:
+                    cat_prop = props.get("ประเภท")
+                    if cat_prop['type'] == 'select' and cat_prop['select']:
+                        category = cat_prop['select']['name']
+                    elif cat_prop['type'] == 'multi_select' and cat_prop['multi_select']:
+                        category = cat_prop['multi_select'][0]['name']
+                except: pass
+
+                # 🔥 Filter Logic (ถ้ามีการระบุ Filter และไม่ตรงกับ Category ให้ข้าม)
+                if category_filter and category_filter != category:
+                    continue
+
                 topic = "ไม่มีหัวข้อ"
                 try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
@@ -97,16 +111,6 @@ def get_latest_news(limit=5):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
-                # ✅ ดึงประเภท (Category)
-                category = "ข่าวสาร"
-                try:
-                    cat_prop = props.get("ประเภท")
-                    if cat_prop['type'] == 'select' and cat_prop['select']:
-                        category = cat_prop['select']['name']
-                    elif cat_prop['type'] == 'multi_select' and cat_prop['multi_select']:
-                        category = cat_prop['multi_select'][0]['name']
-                except: pass
-
                 # ✅ ดึงรูปภาพประกอบ (Loop เก็บทุกรูป)
                 image_urls = []
                 try:
@@ -125,7 +129,7 @@ def get_latest_news(limit=5):
                     "url": link, 
                     "date": show_date,
                     "category": category,
-                    "image_urls": image_urls # ส่งไปเป็น List
+                    "image_urls": image_urls
                 })
     except: pass
     return news_list
@@ -416,20 +420,22 @@ if st.session_state['user_page'] is None:
             try: cookie_manager.delete("lsx_user_id")
             except: pass
 
-# ✅ DIALOG FUNCTION: News Popup (อัปเดตให้แสดงรูปทั้งหมด)
-@st.dialog("📰 รายละเอียดข่าวสาร")
+# ✅ DIALOG FUNCTION: News Popup
+@st.dialog("📰 รายละเอียด")
 def show_news_popup(item):
     st.subheader(item['topic'])
     
-    # Category Display (Red if announcement)
-    cat_style = "color: red; font-weight: bold;" if "ประกาศ" in item['category'] else "color: gray;"
-    st.markdown(f"🗓️ {item['date']} | 🏷️ <span style='{cat_style}'>{item['category']}</span>", unsafe_allow_html=True)
+    # Category Display
+    cat_style = ""
+    if "ประกาศ" in item['category']: cat_style = "color: #FF4B4B; font-weight: bold;"
+    elif "กฎ" in item['category']: cat_style = "color: #2E86C1; font-weight: bold;"
+    else: cat_style = "color: gray;"
     
+    st.markdown(f"🗓️ {item['date']} | 🏷️ <span style='{cat_style}'>{item['category']}</span>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # Image Display (Loop through all images)
+    # Image Display
     if item['image_urls']:
-        # Streamlit st.image สามารถรับ List ของ URL ได้เลย จะแสดงผลเรียงกันลงมาให้
         st.image(item['image_urls'], use_container_width=True)
         if len(item['image_urls']) > 1:
              st.caption(f"ทั้งหมด {len(item['image_urls'])} รูปภาพ")
@@ -449,7 +455,8 @@ with st.sidebar:
         except: user_name = "Member"
         st.success(f"👤 {user_name}")
     
-    menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
+    # ✅ เพิ่มเมนู: กฎระเบียบและข้อบังคับ
+    menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
     try:
         default_index = menu_options.index(st.session_state['selected_menu'])
@@ -515,8 +522,11 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     with st.container(border=True):
                         st.markdown(f"**{item['topic']}**")
                         
-                        # Show Category
-                        cat_color = "red" if "ประกาศ" in item['category'] else "gray"
+                        # Show Category Logic
+                        cat_color = "gray"
+                        if "ประกาศ" in item['category']: cat_color = "red"
+                        elif "กฎ" in item['category']: cat_color = "#2E86C1"
+
                         st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
                         
                         short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
@@ -525,7 +535,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                         
                         c1, c2 = st.columns(2)
                         with c1:
-                            # เปิด Dialog
                             if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
                                 show_news_popup(item)
                         with c2:
@@ -557,6 +566,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
 elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าวสาร":
     st.subheader("📢 ประกาศและข่าวสารทั้งหมด")
     with st.spinner("กำลังโหลดข่าวสาร..."):
+        # 🔥 ดึงทั้งหมด (ไม่กรอง)
         all_news = get_latest_news(limit=50)
         if all_news:
             for item in all_news:
@@ -564,8 +574,10 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     c_head, c_cat = st.columns([3, 1])
                     with c_head: st.markdown(f"### {item['topic']}")
                     with c_cat:
-                        # แสดง Category (แดงถ้าเป็นประกาศ)
-                        cat_color = "#FF4B4B" if "ประกาศ" in item['category'] else "#808080"
+                        # Color Logic
+                        cat_color = "#808080"
+                        if "ประกาศ" in item['category']: cat_color = "#FF4B4B"
+                        elif "กฎ" in item['category']: cat_color = "#2E86C1"
                         st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
                     
                     st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
@@ -574,11 +586,35 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     short_content = (item['content'][:200] + '...') if len(item['content']) > 200 else item['content']
                     st.write(short_content)
                     
-                    # ปุ่มเปิด Dialog
                     if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"news_full_{item['id']}"):
                         show_news_popup(item)
 
         else: st.info("ยังไม่มีประกาศ")
+
+# 📜 PAGE: RULES (NEW)
+elif st.session_state['selected_menu'] == "📜 กฎระเบียบและข้อบังคับ":
+    st.subheader("📜 กฎระเบียบและข้อบังคับ")
+    with st.spinner("กำลังโหลดกฎระเบียบ..."):
+        # 🔥 ดึงเฉพาะ Category = "กฎ"
+        rules_news = get_latest_news(limit=100, category_filter="กฎ")
+        if rules_news:
+            for item in rules_news:
+                with st.container(border=True):
+                    c_head, c_cat = st.columns([3, 1])
+                    with c_head: st.markdown(f"### {item['topic']}")
+                    with c_cat:
+                        # สีน้ำเงินสำหรับกฎ
+                        st.markdown(f"<div style='text-align:right;'><span style='background-color:#2E86C1; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
+                    
+                    st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
+                    st.markdown("---")
+                    
+                    short_content = (item['content'][:200] + '...') if len(item['content']) > 200 else item['content']
+                    st.write(short_content)
+                    
+                    if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"rule_full_{item['id']}"):
+                        show_news_popup(item)
+        else: st.info("ยังไม่มีข้อมูลกฎระเบียบ")
 
 # 📅 PAGE: CALENDAR
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
