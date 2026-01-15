@@ -467,19 +467,26 @@ with st.sidebar:
         except: user_name = "Member"
         st.success(f"👤 {user_name}")
     
-    # ✅ เพิ่มเมนู: กฎระเบียบและข้อบังคับ
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
+    # ฟังก์ชัน Callback สำหรับอัปเดตเมนู
+    def update_menu():
+        st.session_state['selected_menu'] = st.session_state['menu_selection']
+
+    # หา Index ปัจจุบัน
     try:
         default_index = menu_options.index(st.session_state['selected_menu'])
     except ValueError:
         default_index = 0
         
-    selected_menu = st.radio("ไปยังหน้า:", menu_options, index=default_index)
-    
-    if selected_menu != st.session_state['selected_menu']:
-        st.session_state['selected_menu'] = selected_menu
-        st.rerun()
+    # ✅ ใช้ on_change เพื่ออัปเดตค่าทันทีโดยไม่ต้องสั่ง rerun ซ้ำ
+    st.radio(
+        "ไปยังหน้า:", 
+        menu_options, 
+        index=default_index, 
+        key="menu_selection", 
+        on_change=update_menu
+    )
 
     st.write("---")
     st.caption("LSX Ranking System v2.0")
@@ -632,7 +639,7 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
     
-    # --- ส่วน Dialog (Popup) ---
+    # --- ส่วน Dialog ---
     if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
     @st.dialog("รายละเอียดกิจกรรม")
     def show_event_popup(title, url):
@@ -644,48 +651,46 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
         
-        # ⚙️ ตั้งค่าปฏิทิน (เพิ่ม height="700px" เพื่อบังคับความสูง)
+        # เช็คข้อมูล
+        if not events:
+            st.warning("⚠️ ไม่พบข้อมูลกิจกรรม")
+
+        # ⚙️ ตั้งค่าปฏิทิน
         calendar_options = { 
             "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
             "initialDate": "2026-01-01", 
             "initialView": "dayGridMonth",
-            "height": "700px",  # ✅ สำคัญ: บังคับความสูง ป้องกันปฏิทินหดเหลือ 0
+            "height": "auto",  # ให้ปรับความสูงอัตโนมัติ
             "contentHeight": "auto"
         }
         
-        # 🛡️ สร้าง Key แบบสุ่มตามเวลา เพื่อบังคับให้สร้างปฏิทินใหม่ทุกครั้งที่โหลดหน้านี้
-        # (ช่วยแก้ปัญหา กดมาจากเมนูซ้ายแล้วจอขาว)
-        if 'cal_reset_key' not in st.session_state: st.session_state['cal_reset_key'] = 0
-        
-        # 🎨 แสดงผลปฏิทิน
+        # 🎨 แสดงผล
         try:
+            # ใช้ Key คงที่เพื่อลดการกระพริบ
             cal_data = calendar(
                 events=events, 
                 options=calendar_options, 
                 callbacks=['eventClick'], 
-                # ✅ ใช้ Key ผสมกับชื่อเมนู เพื่อให้มันรู้ว่าเป็นคนละตัวกับหน้าอื่น
-                key=f"calendar_main_view_{st.session_state['cal_reset_key']}", 
+                key="main_calendar_widget", 
                 custom_css="""
-                .fc { background-color: #ffffff; padding: 10px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-                .fc-event { cursor: pointer; }
+                .fc { background-color: white; padding: 10px; border-radius: 8px; min-height: 600px; }
                 """
             )
             
-            # 🖱️ Logic คลิกแล้วเด้ง Popup
+            # Logic คลิก
             if cal_data.get("callback") == "eventClick":
                 current_click_data = cal_data["eventClick"]["event"]
                 if current_click_data != st.session_state['last_clicked_event']:
                     st.session_state['last_clicked_event'] = current_click_data
                     clicked_title = current_click_data["title"]
                     clicked_url = current_click_data.get("extendedProps", {}).get("url")
-                    
                     if clicked_url and clicked_url != "#": 
                         show_event_popup(clicked_title, clicked_url)
                     else: 
                         st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
                         
         except Exception as e:
-            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+            st.error(f"❌ Error: {e}")
 
 # 📸 PAGE: GALLERY
 elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
