@@ -631,6 +631,8 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
 # 📅 PAGE: CALENDAR
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
+    
+    # --- ส่วน Dialog (เหมือนเดิม) ---
     if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
     @st.dialog("รายละเอียดกิจกรรม")
     def show_event_popup(title, url):
@@ -638,18 +640,50 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
         st.write("") 
         st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
     
+    # --- ส่วนดึงข้อมูล ---
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
-        calendar_options = { "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, "initialDate": "2026-01-01", "initialView": "dayGridMonth" }
-        cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'], key="my_calendar")
-        if cal_data.get("callback") == "eventClick":
-            current_click_data = cal_data["eventClick"]["event"]
-            if current_click_data != st.session_state['last_clicked_event']:
-                st.session_state['last_clicked_event'] = current_click_data
-                clicked_title = current_click_data["title"]
-                clicked_url = current_click_data.get("extendedProps", {}).get("url")
-                if clicked_url and clicked_url != "#": show_event_popup(clicked_title, clicked_url)
-                else: st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
+        
+        # 🔍 [DEBUG] เช็คว่าข้อมูลมาจริงไหม (ถ้า Cloud มองไม่เห็น Token จะขึ้นเตือนตรงนี้)
+        if not events:
+            st.warning("⚠️ ไม่พบข้อมูลกิจกรรม (หรือเชื่อมต่อ Notion ไม่ได้)")
+        
+        # ⚙️ ตั้งค่าปฏิทิน
+        calendar_options = { 
+            "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
+            "initialDate": "2026-01-01", 
+            "initialView": "dayGridMonth",
+            "height": "650px" # ✅ บังคับความสูง แก้ปัญหาจอขาวบน Cloud
+        }
+        
+        # 🎨 ส่วนแสดงผล (เพิ่ม key และ custom_css)
+        try:
+            cal_data = calendar(
+                events=events, 
+                options=calendar_options, 
+                callbacks=['eventClick'], 
+                key=f"calendar_v2_{len(events)}", # ✅ เปลี่ยน Key ตามจำนวน event เพื่อบังคับ render ใหม่
+                custom_css="""
+                .fc { background-color: #ffffff; padding: 10px; border-radius: 10px; }
+                """
+            )
+            
+            # 🖱️ Logic คลิกแล้วเด้ง Popup
+            if cal_data.get("callback") == "eventClick":
+                current_click_data = cal_data["eventClick"]["event"]
+                # เช็คว่าคลิกใหม่ หรือคลิกซ้ำ (ป้องกันเด้งรัวๆ)
+                if current_click_data != st.session_state['last_clicked_event']:
+                    st.session_state['last_clicked_event'] = current_click_data
+                    clicked_title = current_click_data["title"]
+                    clicked_url = current_click_data.get("extendedProps", {}).get("url")
+                    if clicked_url and clicked_url != "#": 
+                        show_event_popup(clicked_title, clicked_url)
+                    else: 
+                        st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
+                        
+        except Exception as e:
+            st.error(f"❌ เกิดข้อผิดพลาดในการแสดงปฏิทิน: {e}")
+            st.write(events) # ถ้าพัง ให้โชว์ข้อมูลดิบออกมาดู
 
 # 📸 PAGE: GALLERY
 elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
