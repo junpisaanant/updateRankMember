@@ -56,7 +56,7 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: ดึงประเภทและรูปภาพ)
+# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: รองรับหลายรูปภาพ)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5):
     if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
@@ -107,14 +107,15 @@ def get_latest_news(limit=5):
                         category = cat_prop['multi_select'][0]['name']
                 except: pass
 
-                # ✅ ดึงรูปภาพประกอบ (Image)
-                image_url = None
+                # ✅ ดึงรูปภาพประกอบ (Loop เก็บทุกรูป)
+                image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
-                    if img_files:
-                        first_file = img_files[0]
-                        if first_file['type'] == 'external': image_url = first_file['external']['url']
-                        elif first_file['type'] == 'file': image_url = first_file['file']['url']
+                    for file in img_files:
+                        url = ""
+                        if file['type'] == 'external': url = file['external']['url']
+                        elif file['type'] == 'file': url = file['file']['url']
+                        if url: image_urls.append(url)
                 except: pass
                 
                 news_list.append({ 
@@ -124,7 +125,7 @@ def get_latest_news(limit=5):
                     "url": link, 
                     "date": show_date,
                     "category": category,
-                    "image_url": image_url
+                    "image_urls": image_urls # ส่งไปเป็น List
                 })
     except: pass
     return news_list
@@ -415,7 +416,7 @@ if st.session_state['user_page'] is None:
             try: cookie_manager.delete("lsx_user_id")
             except: pass
 
-# ✅ DIALOG FUNCION: News Popup
+# ✅ DIALOG FUNCTION: News Popup (อัปเดตให้แสดงรูปทั้งหมด)
 @st.dialog("📰 รายละเอียดข่าวสาร")
 def show_news_popup(item):
     st.subheader(item['topic'])
@@ -426,9 +427,12 @@ def show_news_popup(item):
     
     st.markdown("---")
     
-    # Image Display
-    if item['image_url']:
-        st.image(item['image_url'], use_container_width=True)
+    # Image Display (Loop through all images)
+    if item['image_urls']:
+        # Streamlit st.image สามารถรับ List ของ URL ได้เลย จะแสดงผลเรียงกันลงมาให้
+        st.image(item['image_urls'], use_container_width=True)
+        if len(item['image_urls']) > 1:
+             st.caption(f"ทั้งหมด {len(item['image_urls'])} รูปภาพ")
         st.write("")
         
     st.write(item['content'])
@@ -521,7 +525,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                         
                         c1, c2 = st.columns(2)
                         with c1:
-                            # ✅ แก้ไข: เปิด Dialog
+                            # เปิด Dialog
                             if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
                                 show_news_popup(item)
                         with c2:
@@ -560,7 +564,7 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     c_head, c_cat = st.columns([3, 1])
                     with c_head: st.markdown(f"### {item['topic']}")
                     with c_cat:
-                        # ✅ แสดง Category (แดงถ้าเป็นประกาศ)
+                        # แสดง Category (แดงถ้าเป็นประกาศ)
                         cat_color = "#FF4B4B" if "ประกาศ" in item['category'] else "#808080"
                         st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
                     
@@ -570,7 +574,7 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     short_content = (item['content'][:200] + '...') if len(item['content']) > 200 else item['content']
                     st.write(short_content)
                     
-                    # ✅ แก้ไข: ปุ่มเปิด Dialog
+                    # ปุ่มเปิด Dialog
                     if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"news_full_{item['id']}"):
                         show_news_popup(item)
 
