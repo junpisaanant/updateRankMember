@@ -17,6 +17,10 @@ except FileNotFoundError:
 MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09" 
 PROJECT_DB_ID = "26fe6d24b97d80e1bdb3c2452a31694c"
 
+# 🔥 กำหนดวันปิดรับสมัคร (ปี, เดือน, วัน, ชั่วโมง, นาที)
+# วันอาทิตย์ที่ 18 มกราคม 2026 เวลา 23:59:59
+REGISTRATION_DEADLINE = datetime(2026, 1, 18, 23, 59, 59)
+
 headers = {
     "Authorization": "Bearer " + NOTION_TOKEN,
     "Content-Type": "application/json",
@@ -38,14 +42,27 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-# 🔥 ปรับจูน: เพิ่ม page_size=100 + Safe Date Check
+# 🔥 ฟังก์ชันใหม่: ดึงตัวเลือกจังหวัดจาก Notion Database Schema
+@st.cache_data(ttl=3600)
+def get_province_options():
+    url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}"
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            props = res.json().get("properties", {})
+            if "มาจากจังหวัด" in props:
+                options = props["มาจากจังหวัด"].get("multi_select", {}).get("options", [])
+                return [opt["name"] for opt in options]
+    except: pass
+    return []
+
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True; next_cursor = None
     while has_more:
-        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
+        payload = { "page_size": 100 }
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -66,7 +83,6 @@ def get_photo_gallery():
                     event_date = None
                     date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                     if date_prop: 
-                        # 🛡️ Safe Check
                         d_obj = date_prop.get("date")
                         if d_obj:
                             d_str = d_obj.get("start")
@@ -85,7 +101,6 @@ def get_photo_gallery():
     gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
     return gallery_items
 
-# 🔥 ปรับจูน: เพิ่ม page_size=100 + Safe Date Check
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -94,7 +109,7 @@ def get_calendar_events():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True; next_cursor = None
     while has_more:
-        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
+        payload = { "page_size": 100 }
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -112,10 +127,8 @@ def get_calendar_events():
                 event_date_str = None
                 date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                 if date_prop: 
-                    # 🛡️ Safe Check (กันพัง)
                     d_obj = date_prop.get("date")
-                    if d_obj:
-                        event_date_str = d_obj.get("start")
+                    if d_obj: event_date_str = d_obj.get("start")
                 
                 event_url = ""
                 try: 
@@ -142,14 +155,13 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 ฟังก์ชัน Ranking: page_size=100 + ตัดเลขอันดับ (เฉพาะในตาราง)
 @st.cache_data(ttl=300) 
 def get_ranking_dataframe():
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
     members = []
     has_more = True; next_cursor = None
     while has_more:
-        payload = { "page_size": 100 } # 🚀 ดึงทีละ 100
+        payload = { "page_size": 100 }
         if next_cursor: payload["start_cursor"] = next_cursor
         try:
             res = requests.post(url, json=payload, headers=headers).json()
@@ -165,7 +177,6 @@ def get_ranking_dataframe():
                 try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                # Logic ตัดเลข Rank
                 rank_val = 9999
                 try:
                     r_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
@@ -219,6 +230,61 @@ def check_login(username, password):
     except: pass
     return None
 
+def check_duplicate_name(display_name):
+    url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
+    payload = { "filter": { "property": "ชื่อ", "title": { "equals": display_name } } }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            results = response.json().get('results', [])
+            return len(results) > 0
+    except: pass
+    return False
+
+# 🔥 ฟังก์ชันสร้างสมาชิกใหม่
+def create_new_member(display_name, email, password, birth_date, photo_url, province):
+    url = "https://api.notion.com/v1/pages"
+    
+    properties = {
+        "ชื่อ": { "title": [{"text": {"content": display_name}}] },
+        "Email": { "rich_text": [{"text": {"content": email}}] }, 
+        "Password": { "rich_text": [{"text": {"content": password}}] }, 
+        "วันเกิด": { "date": { "start": birth_date.strftime("%Y-%m-%d") } }
+    }
+    
+    if photo_url:
+        properties["Photo"] = { "files": [{ "name": "profile.jpg", "type": "external", "external": {"url": photo_url} }] }
+    
+    if province:
+        properties["มาจากจังหวัด"] = { "multi_select": [{ "name": province }] }
+    
+    payload = {
+        "parent": { "database_id": MEMBER_DB_ID },
+        "properties": properties
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"❌ Notion Error ({response.status_code}): {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"❌ System Error: {e}")
+        return None
+
+def get_username_from_created_page(page_id):
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            user_formula = data["properties"].get("username", {}).get("formula", {})
+            return user_formula.get("string")
+    except: pass
+    return None
+
 def get_user_by_id(page_id):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     try:
@@ -227,13 +293,16 @@ def get_user_by_id(page_id):
     except: pass
     return None
 
-def update_member_info(page_id, new_display_name, new_photo_url, new_password, new_birthday):
+# 🔥 แก้ไขข้อมูลสมาชิก (เพิ่ม Province)
+def update_member_info(page_id, new_display_name, new_photo_url, new_password, new_birthday, new_province):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     properties = {}
     if new_display_name: properties["ชื่อ"] = {"title": [{"text": {"content": new_display_name}}]}
     if new_password: properties["Password"] = {"rich_text": [{"text": {"content": new_password}}]}
     if new_photo_url: properties["Photo"] = { "files": [{ "name": "pic", "type": "external", "external": {"url": new_photo_url} }] }
     if new_birthday: properties["วันเกิด"] = { "date": {"start": new_birthday.strftime("%Y-%m-%d")} }
+    if new_province: properties["มาจากจังหวัด"] = { "multi_select": [{ "name": new_province }] }
+
     if not properties: return True
     return requests.patch(url, json={"properties": properties}, headers=headers).status_code == 200
 
@@ -244,6 +313,7 @@ cookie_manager = stx.CookieManager()
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
 if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' 
+if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
 
 if st.session_state['user_page'] is None:
     time.sleep(0.5)
@@ -259,18 +329,111 @@ if st.session_state['user_page'] is None:
             else: cookie_manager.delete("lsx_user_id")
 
 if st.session_state['user_page'] is None:
-    with st.form("login_form"):
-        st.info("💡 Username คือ id ตามด้วย @lsxrank")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        remember_me = st.checkbox("จำฉันไว้ในระบบ (Remember me)")
-        if st.form_submit_button("Login"):
+    
+    # 🔥 ส่วน LOGIN
+    if st.session_state['auth_mode'] == 'login':
+        with st.form("login_form"):
+            st.info("💡 Username คือ id ตามด้วย @lsxrank")
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            remember_me = st.checkbox("จำฉันไว้ในระบบ (Remember me)")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                submitted = st.form_submit_button("Login", use_container_width=True)
+            with c2:
+                pass 
+        
+        if submitted:
             user_data = check_login(username, password)
             if user_data:
                 st.session_state['user_page'] = user_data
                 if remember_me: cookie_manager.set("lsx_user_id", user_data['id'], expires_at=datetime.now().replace(year=datetime.now().year + 1))
                 st.rerun()
-            else: st.error("Login failed")
+            else: st.error("Login failed: Username หรือ Password ไม่ถูกต้อง")
+            
+        st.markdown("---")
+        st.write("ยังไม่มีบัญชีใช่ไหม?")
+        
+        # 🔥 เช็คเวลาปิดรับสมัคร (ปิดอาทิตย์ 18 ม.ค. 2026)
+        if datetime.now() <= REGISTRATION_DEADLINE:
+            if st.button("📝 สมัครสมาชิกใหม่"):
+                st.session_state['auth_mode'] = 'register'
+                st.rerun()
+        else:
+            st.warning(f"⚠️ ปิดรับสมัครสมาชิกแล้ว (สิ้นสุดเมื่อ {REGISTRATION_DEADLINE.strftime('%d %b %Y')})")
+
+    # 🔥 ส่วน REGISTER
+    else:
+        st.subheader("📝 สมัครสมาชิกใหม่")
+        if st.button("⬅️ กลับไปหน้า Login"):
+            st.session_state['auth_mode'] = 'login'
+            st.rerun()
+            
+        with st.form("register_form"):
+            reg_display_name = st.text_input("Display Name (ชื่อที่ใช้แสดงผล)")
+            reg_email = st.text_input("Email")
+            
+            province_options = get_province_options()
+            reg_province = st.selectbox("มาจากจังหวัด", options=province_options, index=None, placeholder="เลือกจังหวัด...")
+            
+            reg_birthday = st.date_input("วันเกิด", value=None, min_value=date(1900,1,1), max_value=date.today())
+            
+            reg_photo = st.file_uploader("รูปโปรไฟล์ (แนะนำสี่เหลี่ยมจัตุรัส)", type=['jpg', 'png'])
+            
+            p1, p2 = st.columns(2)
+            with p1: reg_pass = st.text_input("Password", type="password")
+            with p2: reg_confirm_pass = st.text_input("ยืนยัน Password", type="password")
+            
+            reg_submit = st.form_submit_button("ยืนยันการสมัคร", type="primary")
+            
+            if reg_submit:
+                if not reg_display_name or not reg_email or not reg_pass:
+                    st.error("กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน")
+                elif not reg_province:
+                    st.error("กรุณาเลือกจังหวัด")
+                elif not reg_birthday:
+                    st.error("กรุณาระบุวันเกิด")
+                elif reg_pass != reg_confirm_pass:
+                    st.error("รหัสผ่านไม่ตรงกัน")
+                elif not reg_photo:
+                    st.error("กรุณาอัปโหลดรูปโปรไฟล์")
+                else:
+                    with st.spinner("กำลังตรวจสอบชื่อ..."):
+                        if check_duplicate_name(reg_display_name):
+                            st.error(f"ชื่อ '{reg_display_name}' มีผู้ใช้งานแล้ว กรุณาใช้ชื่ออื่น")
+                        else:
+                            final_photo_url = None
+                            with st.spinner("กำลังอัปโหลดรูปภาพ..."):
+                                final_photo_url = upload_image_to_imgbb(reg_photo)
+                            
+                            if not final_photo_url:
+                                st.error("อัปโหลดรูปภาพไม่สำเร็จ กรุณาลองใหม่")
+                            else:
+                                with st.spinner("กำลังสร้างบัญชี..."):
+                                    new_user = create_new_member(reg_display_name, reg_email, reg_pass, reg_birthday, final_photo_url, reg_province)
+                                
+                                if new_user:
+                                    real_username = None
+                                    try: 
+                                        real_username = new_user["properties"]["username"]["formula"]["string"]
+                                    except: pass
+                                    
+                                    if not real_username:
+                                        time.sleep(1) 
+                                        real_username = get_username_from_created_page(new_user['id'])
+                                    
+                                    if not real_username:
+                                        real_username = f"{new_user['id']}@lsxrank"
+
+                                    st.success("🎉 สมัครสมาชิกสำเร็จ!")
+                                    st.balloons()
+                                    st.markdown("### 🔐 บัญชีของคุณ")
+                                    st.success(f"Username: **{real_username}**")
+                                    st.code(real_username, language="text") 
+                                    st.warning("⚠️ กรุณาจดจำ Username และรหัสผ่านให้ดี (ใช้สำหรับ Login ครั้งต่อไป)")
+                                else:
+                                    st.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
 
 else:
     # 🏆 MODE 1: LEADERBOARD
@@ -344,13 +507,11 @@ else:
         page_id = user_page['id']
         props = user_page['properties']
         
-        # 🔥 ส่วนที่ 1: ดึงอันดับเต็ม (ไม่ตัด! เพื่อแสดงในปุ่ม Profile)
         try:
             rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
             full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
         except: full_rank_str = "-"
 
-        # 🔥 ส่วนที่ 2: ดึงสถิติ
         try:
             stats_list = props.get("สถิติเข้าร่วม SS2", {}).get("rich_text", [])
             stats_str = stats_list[0]["text"]["content"] if stats_list else "0/0"
@@ -370,6 +531,11 @@ else:
         except: current_photo_url = "https://via.placeholder.com/150"
         try: current_birth = datetime.strptime(props["วันเกิด"]["date"]["start"], "%Y-%m-%d").date()
         except: current_birth = None
+        
+        # ดึงจังหวัดปัจจุบัน
+        try: current_province = props["มาจากจังหวัด"]["multi_select"][0]["name"]
+        except: current_province = None
+
         try: rank_group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
         except: rank_group = "-"
         try: rank_ss2 = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
@@ -386,16 +552,14 @@ else:
             st.markdown(f"**🏆 Rank Group:** {rank_group}")
             st.markdown(f"**🎖️ Rank SS2:** {rank_ss2}")
             st.metric(label="⭐ คะแนน SS2", value=score_ss2)
+            st.markdown(f"📍 **จังหวัด:** {current_province if current_province else '-'}")
             st.markdown("---")
-            
-            # 🔥 ปุ่มแสดง Rank (แสดงเต็มๆ 1/213)
             if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
                 st.session_state['view_mode'] = 'leaderboard'; st.rerun()
             if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
                 st.session_state['view_mode'] = 'calendar'; st.rerun()
             if st.button("📸 แกลเลอรีรูปภาพ", use_container_width=True):
                 st.session_state['view_mode'] = 'gallery'; st.rerun()
-            
             st.markdown("**🔥 สถิติเข้าร่วมงานหลัก**")
             st.progress(progress_val)
             st.caption(f"เข้าร่วมแล้ว: {stats_str} งาน")
@@ -404,6 +568,11 @@ else:
             st.subheader("📝 แก้ไขข้อมูลส่วนตัว")
             new_display = st.text_input("Display Name", value=current_display)
             new_birth_input = st.date_input("วันเกิด", value=current_birth if current_birth else date.today(), min_value=date(1900,1,1), max_value=date.today())
+            
+            province_options = get_province_options()
+            current_prov_idx = province_options.index(current_province) if current_province in province_options else None
+            new_province = st.selectbox("มาจากจังหวัด", options=province_options, index=current_prov_idx, placeholder="เลือกจังหวัด...")
+
             st.markdown("---")
             uploaded_file = st.file_uploader("เลือกรูปโปรไฟล์ใหม่", type=['jpg', 'png'])
             if uploaded_file: st.image(uploaded_file, width=120)
@@ -419,7 +588,7 @@ else:
                         if l: final_photo_url = l
                         else: error_flag = True
                 if not error_flag:
-                    if update_member_info(page_id, new_display if new_display != current_display else None, final_photo_url, new_pass if new_pass else None, new_birth_input if new_birth_input != current_birth else None):
+                    if update_member_info(page_id, new_display if new_display != current_display else None, final_photo_url, new_pass if new_pass else None, new_birth_input if new_birth_input != current_birth else None, new_province if new_province != current_province else None):
                         st.toast("✅ สำเร็จ!"); time.sleep(1); get_ranking_dataframe.clear(); st.rerun()
                     else: st.error("บันทึกไม่สำเร็จ")
 
