@@ -56,7 +56,7 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ฟังก์ชันดึงข่าว (ปรับปรุง: รองรับการกรอง Category)
+# 🔥 ฟังก์ชันดึงข่าว
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
@@ -85,7 +85,7 @@ def get_latest_news(limit=5, category_filter=None):
                         category = cat_prop['multi_select'][0]['name']
                 except: pass
 
-                # 🔥 Filter Logic (ถ้ามีการระบุ Filter และไม่ตรงกับ Category ให้ข้าม)
+                # 🔥 Filter Logic
                 if category_filter and category_filter != category:
                     continue
 
@@ -111,7 +111,7 @@ def get_latest_news(limit=5, category_filter=None):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
-                # ✅ ดึงรูปภาพประกอบ (Loop เก็บทุกรูป)
+                # ✅ ดึงรูปภาพประกอบ
                 image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
@@ -179,6 +179,7 @@ def get_photo_gallery():
     gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
     return gallery_items
 
+# 🔥 ปรับปรุง: แสดง Main Event / Side Event
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -219,12 +220,23 @@ def get_calendar_events():
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
                         if target_start <= e_date <= target_end:
-                            bg_color = "#FF4B4B"
-                            if "งานย่อย" in str(event_type): bg_color = "#708090"
-                            elif "งานใหญ่" in str(event_type): bg_color = "#FFD700"
+                            # ✅ Logic ใหม่สำหรับเปลี่ยนชื่อ Tag
+                            bg_color = "#FF4B4B" # Default Red
+                            display_tag = event_type
+                            
+                            if "งานย่อย" in str(event_type): 
+                                bg_color = "#708090" # Gray
+                                display_tag = "Side Event"
+                            elif "งานใหญ่" in str(event_type): 
+                                bg_color = "#FFD700" # Gold
+                                display_tag = "Main Event"
+                            
                             events.append({
-                                "title": f"[{event_type}] {title}", "start": event_date_str,
-                                "backgroundColor": bg_color, "borderColor": bg_color, "allDay": True,
+                                "title": f"[{display_tag}] {title}", 
+                                "start": event_date_str,
+                                "backgroundColor": bg_color, 
+                                "borderColor": bg_color, 
+                                "allDay": True,
                                 "extendedProps": { "url": event_url if event_url else "#" }
                             })
                     except: pass
