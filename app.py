@@ -17,8 +17,7 @@ except FileNotFoundError:
 MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09" 
 PROJECT_DB_ID = "26fe6d24b97d80e1bdb3c2452a31694c"
 
-# 🔥 กำหนดวันปิดรับสมัคร (ปี, เดือน, วัน, ชั่วโมง, นาที)
-# วันอาทิตย์ที่ 18 มกราคม 2026 เวลา 23:59:59
+# วันปิดรับสมัคร
 REGISTRATION_DEADLINE = datetime(2026, 1, 18, 23, 59, 59)
 
 headers = {
@@ -42,7 +41,6 @@ def get_page_title(page_id):
         return "Unknown Page"
     except: return "Error Loading"
 
-# 🔥 ฟังก์ชันใหม่: ดึงตัวเลือกจังหวัดจาก Notion Database Schema
 @st.cache_data(ttl=3600)
 def get_province_options():
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}"
@@ -241,7 +239,6 @@ def check_duplicate_name(display_name):
     except: pass
     return False
 
-# 🔥 ฟังก์ชันสร้างสมาชิกใหม่
 def create_new_member(display_name, email, password, birth_date, photo_url, province):
     url = "https://api.notion.com/v1/pages"
     
@@ -293,7 +290,6 @@ def get_user_by_id(page_id):
     except: pass
     return None
 
-# 🔥 แก้ไขข้อมูลสมาชิก (เพิ่ม Province)
 def update_member_info(page_id, new_display_name, new_photo_url, new_password, new_birthday, new_province):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     properties = {}
@@ -315,6 +311,7 @@ if 'user_page' not in st.session_state: st.session_state['user_page'] = None
 if 'view_mode' not in st.session_state: st.session_state['view_mode'] = 'profile' 
 if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
 
+# Auto Login
 if st.session_state['user_page'] is None:
     time.sleep(0.5)
     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
@@ -328,9 +325,10 @@ if st.session_state['user_page'] is None:
                 st.rerun()
             else: cookie_manager.delete("lsx_user_id")
 
+# ================= LOGIN / REGISTER FLOW =================
 if st.session_state['user_page'] is None:
     
-    # 🔥 ส่วน LOGIN
+    # [PAGE] LOGIN
     if st.session_state['auth_mode'] == 'login':
         with st.form("login_form"):
             st.info("💡 Username คือ id ตามด้วย @lsxrank")
@@ -341,8 +339,7 @@ if st.session_state['user_page'] is None:
             c1, c2 = st.columns(2)
             with c1:
                 submitted = st.form_submit_button("Login", use_container_width=True)
-            with c2:
-                pass 
+            with c2: pass 
         
         if submitted:
             user_data = check_login(username, password)
@@ -355,7 +352,6 @@ if st.session_state['user_page'] is None:
         st.markdown("---")
         st.write("ยังไม่มีบัญชีใช่ไหม?")
         
-        # 🔥 เช็คเวลาปิดรับสมัคร (ปิดอาทิตย์ 18 ม.ค. 2026)
         if datetime.now() <= REGISTRATION_DEADLINE:
             if st.button("📝 สมัครสมาชิกใหม่"):
                 st.session_state['auth_mode'] = 'register'
@@ -363,7 +359,7 @@ if st.session_state['user_page'] is None:
         else:
             st.warning(f"⚠️ ปิดรับสมัครสมาชิกแล้ว (สิ้นสุดเมื่อ {REGISTRATION_DEADLINE.strftime('%d %b %Y')})")
 
-    # 🔥 ส่วน REGISTER
+    # [PAGE] REGISTER
     else:
         st.subheader("📝 สมัครสมาชิกใหม่")
         if st.button("⬅️ กลับไปหน้า Login"):
@@ -378,7 +374,6 @@ if st.session_state['user_page'] is None:
             reg_province = st.selectbox("มาจากจังหวัด", options=province_options, index=None, placeholder="เลือกจังหวัด...")
             
             reg_birthday = st.date_input("วันเกิด", value=None, min_value=date(1900,1,1), max_value=date.today())
-            
             reg_photo = st.file_uploader("รูปโปรไฟล์ (แนะนำสี่เหลี่ยมจัตุรัส)", type=['jpg', 'png'])
             
             p1, p2 = st.columns(2)
@@ -435,7 +430,48 @@ if st.session_state['user_page'] is None:
                                 else:
                                     st.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
 
+# ================= LOGGED IN =================
 else:
+    user_page = st.session_state['user_page']
+    page_id = user_page['id']
+    props = user_page['properties']
+    
+    # 🔥🔥🔥 FORCE CHANGE PASSWORD LOGIC 🔥🔥🔥
+    # เช็คว่ารหัสผ่านปัจจุบันเป็น 'lsx' หรือไม่
+    try: current_password_chk = props["Password"]["rich_text"][0]["text"]["content"]
+    except: current_password_chk = ""
+    
+    if current_password_chk == "lsx":
+        st.warning("⚠️ **ความปลอดภัย:** ระบบตรวจพบรหัสผ่านเริ่มต้น กรุณาเปลี่ยนรหัสผ่านใหม่ก่อนใช้งานต่อ")
+        with st.container(border=True):
+            st.subheader("🔐 เปลี่ยนรหัสผ่าน")
+            force_new_pass = st.text_input("รหัสผ่านใหม่", type="password", key="fp1")
+            force_confirm_pass = st.text_input("ยืนยันรหัสผ่านใหม่", type="password", key="fp2")
+            
+            if st.button("ยืนยันการเปลี่ยนรหัสผ่าน", type="primary", use_container_width=True):
+                if not force_new_pass:
+                    st.error("กรุณากรอกรหัสผ่าน")
+                elif force_new_pass != force_confirm_pass:
+                    st.error("รหัสผ่านไม่ตรงกัน")
+                elif force_new_pass == "lsx":
+                    st.error("กรุณาตั้งรหัสผ่านอื่นที่ไม่ใช่ lsx")
+                else:
+                    with st.spinner("กำลังบันทึก..."):
+                        # อัปเดตเฉพาะรหัสผ่าน (ช่องอื่นส่ง None)
+                        if update_member_info(page_id, None, None, force_new_pass, None, None):
+                            st.toast("✅ เปลี่ยนรหัสผ่านสำเร็จ! กำลังรีโหลด...", icon="🔄")
+                            # ดึงข้อมูลใหม่มาอัปเดตใน Session
+                            new_user_data = get_user_by_id(page_id)
+                            if new_user_data:
+                                st.session_state['user_page'] = new_user_data
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("เกิดข้อผิดพลาด กรุณาลองใหม่")
+        
+        # 🛑 หยุดการทำงาน ไม่ให้โหลดหน้า Profile ด้านล่าง
+        st.stop()
+
     # 🏆 MODE 1: LEADERBOARD
     if st.session_state['view_mode'] == 'leaderboard':
         st.subheader("🏆 Leaderboard: อันดับรวมทั้งหมด")
@@ -503,10 +539,6 @@ else:
 
     # 👤 MODE 4: PROFILE
     else:
-        user_page = st.session_state['user_page']
-        page_id = user_page['id']
-        props = user_page['properties']
-        
         try:
             rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
             full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
@@ -531,8 +563,6 @@ else:
         except: current_photo_url = "https://via.placeholder.com/150"
         try: current_birth = datetime.strptime(props["วันเกิด"]["date"]["start"], "%Y-%m-%d").date()
         except: current_birth = None
-        
-        # ดึงจังหวัดปัจจุบัน
         try: current_province = props["มาจากจังหวัด"]["multi_select"][0]["name"]
         except: current_province = None
 
