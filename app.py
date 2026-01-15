@@ -641,7 +641,7 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
         calendar_options = { "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, "initialDate": "2026-01-01", "initialView": "dayGridMonth" }
-        cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'])
+        cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'], key="my_calendar")
         if cal_data.get("callback") == "eventClick":
             current_click_data = cal_data["eventClick"]["event"]
             if current_click_data != st.session_state['last_clicked_event']:
