@@ -580,8 +580,12 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
         if gallery:
             latest = gallery[0]
             with st.container(border=True):
-                st.image(latest['photo_url'], use_container_width=True)
-                st.caption(f"{latest['title']} ({latest['date_str']})")
+                # ❌ ลบการแสดงรูปภาพออกตามที่ขอ
+                # st.image(latest['photo_url'], use_container_width=True) 
+                
+                # ปรับแต่งข้อความให้ดูดีขึ้นเมื่อไม่มีรูป
+                st.write(f"**{latest['title']}**")
+                st.caption(f"🗓️ {latest['date_str']}")
                 st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
 
 # 🏆 PAGE: LEADERBOARD
