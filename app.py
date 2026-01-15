@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import time
+import uuid # ✅ เพิ่ม library นี้เพื่อใช้สุ่ม Key
 import pandas as pd
 from datetime import datetime, date, timedelta
 import extra_streamlit_components as stx
@@ -421,16 +422,25 @@ if 'user_page' not in st.session_state: st.session_state['user_page'] = None
 if 'selected_menu' not in st.session_state: st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
 if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
 
-if st.session_state['user_page'] is None:
-    time.sleep(0.5)
+# ✅ แก้ไข: เพิ่มตัวแปรกันการ Check ซ้ำ (ป้องกัน Calendar ไม่ขึ้น)
+if 'checked_cookies' not in st.session_state:
+    st.session_state['checked_cookies'] = False
+
+if st.session_state['user_page'] is None and not st.session_state['checked_cookies']:
+    time.sleep(0.5) # รอ Cookie Manager โหลด
     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
+    
     if cookie_user_id:
         user_data = get_user_by_id(cookie_user_id)
         if user_data:
             st.session_state['user_page'] = user_data
+            st.rerun() # ถ้าเจอ user ให้ rerun เพื่ออัปเดตสถานะทันที
         else:
             try: cookie_manager.delete("lsx_user_id")
             except: pass
+    
+    # บันทึกว่าเช็คแล้ว จะได้ไม่ Sleep อีกในการรันรอบถัดไป
+    st.session_state['checked_cookies'] = True
 
 # ✅ DIALOG FUNCTION: News Popup
 @st.dialog("📰 รายละเอียด")
@@ -469,9 +479,15 @@ with st.sidebar:
     
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
-    # ฟังก์ชัน Callback สำหรับอัปเดตเมนู
+    # ฟังก์ชัน Callback สำหรับอัปเดตเมนู (ใช้ On_change เพื่อแก้ปัญหา Double Rerun)
     def update_menu():
         st.session_state['selected_menu'] = st.session_state['menu_selection']
+        # ✅ เพิ่มบรรทัดนี้: เมื่อเปลี่ยนเมนู ให้สร้าง Key ปฏิทินใหม่รอเลย (ใช้ UUID สุ่ม)
+        st.session_state['calendar_force_key'] = str(uuid.uuid4())
+
+    # Initial State for Calendar Key
+    if 'calendar_force_key' not in st.session_state:
+        st.session_state['calendar_force_key'] = str(uuid.uuid4())
 
     # หา Index ปัจจุบัน
     try:
@@ -479,7 +495,6 @@ with st.sidebar:
     except ValueError:
         default_index = 0
         
-    # ✅ ใช้ on_change เพื่ออัปเดตค่าทันทีโดยไม่ต้องสั่ง rerun ซ้ำ
     st.radio(
         "ไปยังหน้า:", 
         menu_options, 
@@ -541,7 +556,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     with st.container(border=True):
                         st.markdown(f"**{item['topic']}**")
                         
-                        # Show Category Logic
                         cat_color = "gray"
                         if "ประกาศ" in item['category']: cat_color = "red"
                         elif "กฎ" in item['category']: cat_color = "#2E86C1"
@@ -585,7 +599,6 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
 elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าวสาร":
     st.subheader("📢 ประกาศและข่าวสารทั้งหมด")
     with st.spinner("กำลังโหลดข่าวสาร..."):
-        # 🔥 ดึงทั้งหมด (ไม่กรอง)
         all_news = get_latest_news(limit=50)
         if all_news:
             for item in all_news:
@@ -593,7 +606,6 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     c_head, c_cat = st.columns([3, 1])
                     with c_head: st.markdown(f"### {item['topic']}")
                     with c_cat:
-                        # Color Logic
                         cat_color = "#808080"
                         if "ประกาศ" in item['category']: cat_color = "#FF4B4B"
                         elif "กฎ" in item['category']: cat_color = "#2E86C1"
@@ -614,7 +626,6 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
 elif st.session_state['selected_menu'] == "📜 กฎระเบียบและข้อบังคับ":
     st.subheader("📜 กฎระเบียบและข้อบังคับ")
     with st.spinner("กำลังโหลดกฎระเบียบ..."):
-        # 🔥 ดึงเฉพาะ Category = "กฎ"
         rules_news = get_latest_news(limit=100, category_filter="กฎ")
         if rules_news:
             for item in rules_news:
@@ -622,7 +633,6 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
                     c_head, c_cat = st.columns([3, 1])
                     with c_head: st.markdown(f"### {item['topic']}")
                     with c_cat:
-                        # สีน้ำเงินสำหรับกฎ
                         st.markdown(f"<div style='text-align:right;'><span style='background-color:#2E86C1; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
                     
                     st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
@@ -635,11 +645,10 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
                         show_news_popup(item)
         else: st.info("ยังไม่มีข้อมูลกฎระเบียบ")
 
-# 📅 PAGE: CALENDAR
+# 📅 PAGE: CALENDAR (แก้ไข: ใช้ Key สุ่มจาก UUID เพื่อ Force Remount)
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
     
-    # --- ส่วน Dialog ---
     if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
     @st.dialog("รายละเอียดกิจกรรม")
     def show_event_popup(title, url):
@@ -647,50 +656,44 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
         st.write("") 
         st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
     
-    # --- ส่วนดึงข้อมูล ---
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
-        
-        # เช็คข้อมูล
-        if not events:
-            st.warning("⚠️ ไม่พบข้อมูลกิจกรรม")
+    
 
-        # ⚙️ ตั้งค่าปฏิทิน
-        calendar_options = { 
-            "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
-            "initialDate": "2026-01-01", 
-            "initialView": "dayGridMonth",
-            "height": "auto",  # ให้ปรับความสูงอัตโนมัติ
-            "contentHeight": "auto"
-        }
+    # ⚙️ ตั้งค่าปฏิทิน
+    # ✅ ใช้ mode 'dayGridMonth' เป็น default view
+    calendar_options = { 
+        "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
+        "initialDate": "2026-01-01", 
+        "initialView": "dayGridMonth",
+        "height": 750, # ✅ ใส่ตัวเลขความสูงชัดเจน (ไม่มี px)
+    }
+    
+    try:
+        # ✅ ใช้ Key ที่สุ่มใหม่ทุกครั้งที่กดเมนูเข้ามาหน้านี้ (จาก st.session_state['calendar_force_key'])
+        # เพื่อบังคับให้ Streamlit ทิ้งปฏิทินตัวเก่าและสร้างใหม่เสมอ แก้ปัญหาจอขาวตอนไม่ได้ Login
+        cal_key = f"cal_force_{st.session_state.get('calendar_force_key', 'default')}"
         
-        # 🎨 แสดงผล
-        try:
-            # ใช้ Key คงที่เพื่อลดการกระพริบ
-            cal_data = calendar(
-                events=events, 
-                options=calendar_options, 
-                callbacks=['eventClick'], 
-                key="main_calendar_widget", 
-                custom_css="""
-                .fc { background-color: white; padding: 10px; border-radius: 8px; min-height: 600px; }
-                """
-            )
-            
-            # Logic คลิก
-            if cal_data.get("callback") == "eventClick":
-                current_click_data = cal_data["eventClick"]["event"]
-                if current_click_data != st.session_state['last_clicked_event']:
-                    st.session_state['last_clicked_event'] = current_click_data
-                    clicked_title = current_click_data["title"]
-                    clicked_url = current_click_data.get("extendedProps", {}).get("url")
-                    if clicked_url and clicked_url != "#": 
-                        show_event_popup(clicked_title, clicked_url)
-                    else: 
-                        st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
-                        
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+        cal_data = calendar(
+            events=events, 
+            options=calendar_options, 
+            callbacks=['eventClick'], 
+            key=cal_key 
+        )
+        
+        if cal_data.get("callback") == "eventClick":
+            current_click_data = cal_data["eventClick"]["event"]
+            if current_click_data != st.session_state['last_clicked_event']:
+                st.session_state['last_clicked_event'] = current_click_data
+                clicked_title = current_click_data["title"]
+                clicked_url = current_click_data.get("extendedProps", {}).get("url")
+                if clicked_url and clicked_url != "#": 
+                    show_event_popup(clicked_title, clicked_url)
+                else: 
+                    st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
+                    
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
 
 # 📸 PAGE: GALLERY
 elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
@@ -840,9 +843,6 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
             st.markdown("---")
             if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
                 st.session_state['selected_menu'] = '🏆 ตารางอันดับ'; st.rerun() 
-            
-            if st.button("📅 ปฏิทินกิจกรรม", use_container_width=True):
-                st.session_state['selected_menu'] = '📅 ปฏิทินกิจกรรม'; st.rerun()
             
             st.markdown("---")
             st.markdown("**🔥 สถิติการเข้าร่วม**")
