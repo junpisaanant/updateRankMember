@@ -1,13 +1,23 @@
 import streamlit as st
 import requests
 import time
-import uuid # ✅ เพิ่ม library นี้เพื่อใช้สุ่ม Key
+import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
 import extra_streamlit_components as stx
 from streamlit_calendar import calendar
+import pytz 
 
 # ================= CONFIGURATION =================
+# ✅ ต้องเป็นคำสั่งแรกสุด ห้ามย้าย
+st.set_page_config(page_title="LSX Ranking", page_icon="🏆", layout="wide")
+
+# 🔥 จัดการ Timezone ให้เป็นไทยเสมอ
+THAI_TZ = pytz.timezone('Asia/Bangkok')
+
+def get_thai_date():
+    return datetime.now(THAI_TZ).date()
+
 try:
     NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
     IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "0e31066455b60d727553d11e22761846") 
@@ -57,17 +67,13 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 ฟังก์ชันดึงข่าว
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
-    if NEWS_DB_ID == "PUT_YOUR_NEWS_DB_ID_HERE": return []
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
-    
     payload = {
         "page_size": limit, 
         "sorts": [ { "property": "วันที่ประกาศ", "direction": "descending" } ]
     }
-    
     news_list = []
     try:
         res = requests.post(url, json=payload, headers=headers)
@@ -76,7 +82,6 @@ def get_latest_news(limit=5, category_filter=None):
             for page in data.get("results", []):
                 props = page.get("properties", {})
                 
-                # ✅ ดึงประเภท (Category)
                 category = "ข่าวสาร"
                 try:
                     cat_prop = props.get("ประเภท")
@@ -86,7 +91,6 @@ def get_latest_news(limit=5, category_filter=None):
                         category = cat_prop['multi_select'][0]['name']
                 except: pass
 
-                # 🔥 Filter Logic
                 if category_filter and category_filter != category:
                     continue
 
@@ -112,7 +116,6 @@ def get_latest_news(limit=5, category_filter=None):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
-                # ✅ ดึงรูปภาพประกอบ
                 image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
@@ -180,7 +183,6 @@ def get_photo_gallery():
     gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
     return gallery_items
 
-# 🔥 ปรับปรุง: แสดง Main Event / Side Event
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -221,15 +223,13 @@ def get_calendar_events():
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
                         if target_start <= e_date <= target_end:
-                            # ✅ Logic ใหม่สำหรับเปลี่ยนชื่อ Tag
-                            bg_color = "#FF4B4B" # Default Red
+                            bg_color = "#FF4B4B" 
                             display_tag = event_type
-                            
                             if "งานย่อย" in str(event_type): 
-                                bg_color = "#708090" # Gray
+                                bg_color = "#708090" 
                                 display_tag = "Side Event"
                             elif "งานใหญ่" in str(event_type): 
-                                bg_color = "#FFD700" # Gold
+                                bg_color = "#FFD700" 
                                 display_tag = "Main Event"
                             
                             events.append({
@@ -249,9 +249,9 @@ def get_calendar_events():
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    today = date.today()
+    today_str = get_thai_date().strftime("%Y-%m-%d")
     payload = {
-        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": today.strftime("%Y-%m-%d") } },
+        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": today_str } },
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
         "page_size": 1
     }
@@ -376,12 +376,8 @@ def create_new_member(display_name, email, password, birth_date, photo_url, prov
     try:
         response = requests.post(url, json=payload, headers=headers)
         if response.status_code == 200: return response.json()
-        else:
-            st.error(f"❌ Notion Error ({response.status_code}): {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"❌ System Error: {e}")
-        return None
+        else: return None
+    except: return None
 
 def get_username_from_created_page(page_id):
     url = f"https://api.notion.com/v1/pages/{page_id}"
@@ -413,61 +409,59 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
     if not properties: return True
     return requests.patch(url, json={"properties": properties}, headers=headers).status_code == 200
 
-# ================= UI PART =================
-st.set_page_config(page_title="LSX Ranking", page_icon="🏆", layout="wide")
-st.title("🏆LSX Ranking")
-cookie_manager = stx.CookieManager()
+# ================= GLOBAL DIALOGS (Moved Here) =================
+# ✅ ย้าย Dialog มาประกาศตรงนี้ (Global Scope) แก้ปัญหา Bad Delta Path
 
-if 'user_page' not in st.session_state: st.session_state['user_page'] = None
-if 'selected_menu' not in st.session_state: st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
-if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
-
-# ✅ แก้ไข: เพิ่มตัวแปรกันการ Check ซ้ำ (ป้องกัน Calendar ไม่ขึ้น)
-if 'checked_cookies' not in st.session_state:
-    st.session_state['checked_cookies'] = False
-
-if st.session_state['user_page'] is None and not st.session_state['checked_cookies']:
-    time.sleep(0.5) # รอ Cookie Manager โหลด
-    cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
-    
-    if cookie_user_id:
-        user_data = get_user_by_id(cookie_user_id)
-        if user_data:
-            st.session_state['user_page'] = user_data
-            st.rerun() # ถ้าเจอ user ให้ rerun เพื่ออัปเดตสถานะทันที
-        else:
-            try: cookie_manager.delete("lsx_user_id")
-            except: pass
-    
-    # บันทึกว่าเช็คแล้ว จะได้ไม่ Sleep อีกในการรันรอบถัดไป
-    st.session_state['checked_cookies'] = True
-
-# ✅ DIALOG FUNCTION: News Popup
 @st.dialog("📰 รายละเอียด")
 def show_news_popup(item):
     st.subheader(item['topic'])
-    
-    # Category Display
     cat_style = ""
     if "ประกาศ" in item['category']: cat_style = "color: #FF4B4B; font-weight: bold;"
     elif "กฎ" in item['category']: cat_style = "color: #2E86C1; font-weight: bold;"
     else: cat_style = "color: gray;"
-    
     st.markdown(f"🗓️ {item['date']} | 🏷️ <span style='{cat_style}'>{item['category']}</span>", unsafe_allow_html=True)
     st.markdown("---")
-    
-    # Image Display
     if item['image_urls']:
         st.image(item['image_urls'], use_container_width=True)
         if len(item['image_urls']) > 1:
              st.caption(f"ทั้งหมด {len(item['image_urls'])} รูปภาพ")
         st.write("")
-        
     st.write(item['content'])
-    
     if item['url']:
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
+
+@st.dialog("รายละเอียดกิจกรรม")
+def show_event_popup(title, url):
+    st.write(f"คุณต้องการเปิดหน้าเว็บของงาน **{title}** หรือไม่?")
+    st.write("") 
+    st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
+
+# ================= UI START =================
+st.title("🏆LSX Ranking")
+
+cookie_manager = stx.CookieManager(key="lsx_cookie_manager")
+
+if 'user_page' not in st.session_state: 
+    st.session_state['user_page'] = None
+if 'selected_menu' not in st.session_state: 
+    st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
+if 'auth_mode' not in st.session_state: 
+    st.session_state['auth_mode'] = 'login' 
+if 'last_clicked_event' not in st.session_state: 
+    st.session_state['last_clicked_event'] = None
+
+if 'cookie_checked' not in st.session_state:
+    st.session_state['cookie_checked'] = False
+
+if not st.session_state['cookie_checked']:
+    time.sleep(0.5) 
+    cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
+    if cookie_user_id:
+        user_data = get_user_by_id(cookie_user_id)
+        if user_data:
+            st.session_state['user_page'] = user_data
+    st.session_state['cookie_checked'] = True
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -479,21 +473,15 @@ with st.sidebar:
     
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
-    # ฟังก์ชัน Callback สำหรับอัปเดตเมนู (ใช้ On_change เพื่อแก้ปัญหา Double Rerun)
     def update_menu():
         st.session_state['selected_menu'] = st.session_state['menu_selection']
-        # ✅ เพิ่มบรรทัดนี้: เมื่อเปลี่ยนเมนู ให้สร้าง Key ปฏิทินใหม่รอเลย (ใช้ UUID สุ่ม)
         st.session_state['calendar_force_key'] = str(uuid.uuid4())
 
-    # Initial State for Calendar Key
     if 'calendar_force_key' not in st.session_state:
         st.session_state['calendar_force_key'] = str(uuid.uuid4())
 
-    # หา Index ปัจจุบัน
-    try:
-        default_index = menu_options.index(st.session_state['selected_menu'])
-    except ValueError:
-        default_index = 0
+    try: default_index = menu_options.index(st.session_state['selected_menu'])
+    except ValueError: default_index = 0
         
     st.radio(
         "ไปยังหน้า:", 
@@ -502,7 +490,6 @@ with st.sidebar:
         key="menu_selection", 
         on_change=update_menu
     )
-
     st.write("---")
     st.caption("LSX Ranking System v2.0")
 
@@ -511,6 +498,7 @@ with st.sidebar:
 # 🏠 PAGE: DASHBOARD
 if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)":
     st.header("🏠 หน้าแรก (Dashboard)")
+    
     col_d1, col_d2 = st.columns([2, 1])
     
     with col_d1:
@@ -536,7 +524,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     try:
                         d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
                         d_nice = d_obj.strftime("%d %b %Y")
-                        days_left = (d_obj - date.today()).days
+                        days_left = (d_obj - get_thai_date()).days
                     except: d_nice = next_event['date']; days_left = 99
                     st.write(f"🗓️ **วันที่:** {d_nice}")
                     st.write(f"🏷️ **ประเภท:** {next_event['type']}")
@@ -547,46 +535,40 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
             else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
         
-        st.write("")
-        st.subheader("📢 ประกาศล่าสุด")
-        with st.spinner("กำลังโหลดข่าว..."):
-            news_items = get_latest_news(limit=1)
-            if news_items:
-                for item in news_items:
-                    with st.container(border=True):
-                        st.markdown(f"**{item['topic']}**")
-                        
-                        cat_color = "gray"
-                        if "ประกาศ" in item['category']: cat_color = "red"
-                        elif "กฎ" in item['category']: cat_color = "#2E86C1"
-
-                        st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
-                        
-                        short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
-                        st.write(short_content)
-                        st.caption(f"🗓️ {item['date']}")
-                        
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
-                                show_news_popup(item)
-                        with c2:
-                            if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
-            else: st.info("ไม่มีประกาศใหม่")
-            
-        st.write("")
-        st.subheader("📸 รูปภาพล่าสุด")
-        gallery = get_photo_gallery()
-        if gallery:
-            latest = gallery[0]
-            with st.container(border=True):
-                # ❌ ลบการแสดงรูปภาพออกตามที่ขอ
-                # st.image(latest['photo_url'], use_container_width=True) 
-                
-                # ปรับแต่งข้อความให้ดูดีขึ้นเมื่อไม่มีรูป
-                st.write(f"**{latest['title']}**")
-                st.caption(f"🗓️ {latest['date_str']}")
-                st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
+    st.write("---")
+    st.subheader("📢 ประกาศล่าสุด")
+    with st.spinner("กำลังโหลดข่าว..."):
+        news_items = get_latest_news(limit=1)
+        if news_items:
+            for item in news_items:
+                with st.container(border=True):
+                    st.markdown(f"**{item['topic']}**")
+                    cat_color = "gray"
+                    if "ประกาศ" in item['category']: cat_color = "red"
+                    elif "กฎ" in item['category']: cat_color = "#2E86C1"
+                    st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
+                    
+                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                    st.write(short_content)
+                    st.caption(f"🗓️ {item['date']}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
+                            show_news_popup(item)
+                    with c2:
+                        if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
+        else: st.info("ไม่มีประกาศใหม่")
+        
+    st.write("")
+    st.subheader("📸 รูปภาพล่าสุด")
+    gallery = get_photo_gallery()
+    if gallery:
+        latest = gallery[0]
+        with st.container(border=True):
+            st.write(f"**{latest['title']}**")
+            st.caption(f"🗓️ {latest['date_str']}")
+            st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
 
 # 🏆 PAGE: LEADERBOARD
 elif st.session_state['selected_menu'] == "🏆 ตารางอันดับ":
@@ -649,41 +631,23 @@ elif st.session_state['selected_menu'] == "📜 กฎระเบียบแ�
                         show_news_popup(item)
         else: st.info("ยังไม่มีข้อมูลกฎระเบียบ")
 
-# 📅 PAGE: CALENDAR (แก้ไข: ใช้ Key สุ่มจาก UUID เพื่อ Force Remount)
+# 📅 PAGE: CALENDAR
 elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจกรรม":
     st.subheader("📅 ปฏิทินกิจกรรม (ม.ค. - มี.ค. 2026)")
-    
-    if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
-    @st.dialog("รายละเอียดกิจกรรม")
-    def show_event_popup(title, url):
-        st.write(f"คุณต้องการเปิดหน้าเว็บของงาน **{title}** หรือไม่?")
-        st.write("") 
-        st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
     
     with st.spinner("กำลังโหลดปฏิทิน..."): 
         events = get_calendar_events()
     
-
-    # ⚙️ ตั้งค่าปฏิทิน
-    # ✅ ใช้ mode 'dayGridMonth' เป็น default view
     calendar_options = { 
         "headerToolbar": { "left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth" }, 
         "initialDate": "2026-01-01", 
         "initialView": "dayGridMonth",
-        "height": 750, # ✅ ใส่ตัวเลขความสูงชัดเจน (ไม่มี px)
+        "height": 750,
     }
     
     try:
-        # ✅ ใช้ Key ที่สุ่มใหม่ทุกครั้งที่กดเมนูเข้ามาหน้านี้ (จาก st.session_state['calendar_force_key'])
-        # เพื่อบังคับให้ Streamlit ทิ้งปฏิทินตัวเก่าและสร้างใหม่เสมอ แก้ปัญหาจอขาวตอนไม่ได้ Login
         cal_key = f"cal_force_{st.session_state.get('calendar_force_key', 'default')}"
-        
-        cal_data = calendar(
-            events=events, 
-            options=calendar_options, 
-            callbacks=['eventClick'], 
-            key=cal_key 
-        )
+        cal_data = calendar(events=events, options=calendar_options, callbacks=['eventClick'], key=cal_key)
         
         if cal_data.get("callback") == "eventClick":
             current_click_data = cal_data["eventClick"]["event"]
@@ -692,6 +656,7 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
                 clicked_title = current_click_data["title"]
                 clicked_url = current_click_data.get("extendedProps", {}).get("url")
                 if clicked_url and clicked_url != "#": 
+                    # ✅ เรียกใช้ Dialog ที่ประกาศไว้ข้างบน (Global)
                     show_event_popup(clicked_title, clicked_url)
                 else: 
                     st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
@@ -809,7 +774,6 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
                         else: st.error("ผิดพลาด")
             st.stop()
 
-        # Display Profile
         try: rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
         except: rank_list = []
         full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
