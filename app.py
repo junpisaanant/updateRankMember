@@ -328,7 +328,10 @@ def get_ranking_dataframe():
     
     if not members: return pd.DataFrame()
     df = pd.DataFrame(members)
-    df = df.sort_values(by=["rank_num", "score"], ascending=[True, False]).reset_index(drop=True)
+    
+    # ✅ ปรับแก้ตรงนี้: เรียงจาก คะแนน (มากไปน้อย) -> ชื่อ (ก-ฮ)
+    df = df.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+    
     df['อันดับ'] = df['rank_num'] 
     return df
 
