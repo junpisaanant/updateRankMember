@@ -306,7 +306,7 @@ def get_ranking_dataframe():
                 try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
                 except: pass
 
-                # --- 1. อายุ (ดึงจากคอลัมน์ 'อายุ' โดยตรง) ---
+                # --- 1. อายุ ---
                 age = 99 
                 try:
                     age_prop = props.get("อายุ")
@@ -316,15 +316,37 @@ def get_ranking_dataframe():
                         elif age_prop['type'] == 'rollup': age = age_prop['rollup'].get('number', 99)
                 except: pass
 
-                # --- Rank SS2 (Normal) ---
+                # --- Rank SS2 (Normal) - FIX LOGIC HERE ---
                 score = 0
-                # 🔥 EDITED: ดึงจาก "คะแนน Rank SS2 (Roll Up)" ตามที่ต้องการ
-                sp = props.get("คะแนน Rank SS2 (Roll Up)") 
-                if sp:
-                    if sp['type'] == 'number': score = sp['number'] or 0
-                    elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
-                    elif sp['type'] == 'formula': score = sp['formula'].get('number', 0) or 0
+                # พยายามหาคอลัมน์ โดยลองหลายชื่อเผื่อพิมพ์ผิด
+                target_cols = ["คะแนน Rank SS2 (Roll Up)", "คะแนน Rank SS2 (Rollup)", "คะแนน Rank SS2"]
                 
+                found_prop = None
+                for col_name in target_cols:
+                    if col_name in props:
+                        found_prop = props[col_name]
+                        break
+                
+                if found_prop:
+                    p_type = found_prop.get('type')
+                    if p_type == 'number':
+                        score = found_prop.get('number') or 0
+                    elif p_type == 'formula':
+                        score = found_prop.get('formula', {}).get('number') or 0
+                    elif p_type == 'rollup':
+                        r_data = found_prop.get('rollup', {})
+                        r_type = r_data.get('type')
+                        if r_type == 'number':
+                            score = r_data.get('number') or 0
+                        elif r_type == 'array':
+                            # กรณี Rollup ส่งมาเป็น Array (ผลรวม)
+                            arr = r_data.get('array', [])
+                            val_sum = 0
+                            for item in arr:
+                                if item['type'] == 'number': val_sum += (item.get('number') or 0)
+                                elif item['type'] == 'formula': val_sum += (item.get('formula', {}).get('number') or 0)
+                            score = val_sum
+
                 rank_val = 9999
                 try:
                     r_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
@@ -336,7 +358,6 @@ def get_ranking_dataframe():
 
                 # --- Rank SS2 (Junior) ---
                 score_jr = 0
-                # 🔥 ดึงคะแนน Rank SS2 Junior
                 sp_jr = props.get("คะแนน Rank SS2 Junior") 
                 if sp_jr:
                     if sp_jr['type'] == 'number': score_jr = sp_jr['number'] or 0
@@ -371,14 +392,14 @@ def get_ranking_dataframe():
             next_cursor = res.get("next_cursor")
         except: break
     
-    # ✅ ป้องกัน KeyError: กำหนด Columns เสมอ
+    # ✅ ป้องกัน KeyError
     cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num', 'rank_jr_str']
     if not members: 
         return pd.DataFrame(columns=cols + ['อันดับ', 'อันดับ Junior'])
     
     df = pd.DataFrame(members)
     
-    # 🔥 FIX: แปลง Data Type ให้เป็นตัวเลขจริงๆ (Force Numeric)
+    # 🔥 Force Numeric
     df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
     df['rank_num'] = pd.to_numeric(df['rank_num'], errors='coerce').fillna(9999)
     df['score_jr'] = pd.to_numeric(df['score_jr'], errors='coerce').fillna(0)
