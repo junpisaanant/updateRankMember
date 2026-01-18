@@ -310,7 +310,7 @@ def get_ranking_dataframe():
                 except: pass
 
                 # --- คำนวณอายุ ---
-                age = 99 # ค่า Default แก่สุดไว้ก่อนถ้าไม่มีวันเกิด
+                age = 99 
                 try:
                     b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
                     if b_str:
@@ -361,10 +361,8 @@ def get_ranking_dataframe():
                     "group": group, 
                     "title": title,
                     "age": age,
-                    # Normal
                     "score": score, 
                     "rank_num": rank_val,
-                    # Junior
                     "score_jr": score_jr,
                     "rank_jr_num": rank_jr_val,
                     "rank_jr_str": rank_jr_str
@@ -373,14 +371,18 @@ def get_ranking_dataframe():
             next_cursor = res.get("next_cursor")
         except: break
     
-    # ✅ ป้องกัน KeyError: กำหนด Columns เสมอ
     cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num', 'rank_jr_str']
     if not members: 
         return pd.DataFrame(columns=cols + ['อันดับ', 'อันดับ Junior'])
     
     df = pd.DataFrame(members)
     
-    # เพิ่มคอลัมน์แสดงผล (Mapping)
+    # 🔥 FIX: แปลง Data Type ให้เป็นตัวเลขจริงๆ เพื่อการเรียงและกรองที่ถูกต้อง
+    df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+    df['score_jr'] = pd.to_numeric(df['score_jr'], errors='coerce').fillna(0)
+    df['age'] = pd.to_numeric(df['age'], errors='coerce').fillna(99)
+    
+    # เพิ่มคอลัมน์แสดงผล
     df['อันดับ'] = df['rank_num'] 
     df['อันดับ Junior'] = df['rank_jr_num']
     
@@ -564,7 +566,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             # --- TAB 1: Normal Top 10 ---
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
-                if not df_dash.empty and 'score' in df_dash.columns:
+                if not df_dash.empty:
                     # ✅ เรียงเหมือนเดิม: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
@@ -583,8 +585,8 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             # --- TAB 2: Junior Top 10 ---
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
-                if not df_dash.empty and 'age' in df_dash.columns:
-                    # ✅ กรองอายุ <= 13
+                if not df_dash.empty:
+                    # ✅ กรองอายุ <= 13 (ใช้ข้อมูลที่แปลงเป็นตัวเลขแล้ว)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
@@ -946,7 +948,6 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
             today = date.today()
             user_age = today.year - current_birth.year - ((today.month, today.day) < (current_birth.month, current_birth.day))
 
-        # --- ส่วนแสดงผล ---
         col1, col2 = st.columns([1, 2])
         with col1:
             st.image(current_photo, width=150)
