@@ -318,6 +318,7 @@ def get_ranking_dataframe():
 
                 # --- Rank SS2 (Normal) ---
                 score = 0
+                # 🔥 ดึงคะแนน Rank SS2 ปกติ
                 sp = props.get("คะแนน Rank SS2") 
                 if sp:
                     if sp['type'] == 'number': score = sp['number'] or 0
@@ -335,6 +336,7 @@ def get_ranking_dataframe():
 
                 # --- Rank SS2 (Junior) ---
                 score_jr = 0
+                # 🔥 ดึงคะแนน Rank SS2 Junior
                 sp_jr = props.get("คะแนน Rank SS2 Junior") 
                 if sp_jr:
                     if sp_jr['type'] == 'number': score_jr = sp_jr['number'] or 0
@@ -571,6 +573,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
                     
+                    # ✅ แสดง Score (ที่ดึงมาจาก คะแนน Rank SS2)
                     st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
                         column_config={ 
                             "photo": st.column_config.ImageColumn("รูป", width="small"), 
@@ -586,7 +589,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
                 if not df_dash.empty:
-                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ 'age' ที่เป็นตัวเลขแล้ว)
+                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ 'age' จาก Notion โดยตรง)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
@@ -702,7 +705,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         with tab_lb_jr:
             st.subheader("👶 ตารางอันดับ Junior")
             
-            # ✅ กรองเฉพาะอายุ <= 13 ปี
+            # ✅ กรองเฉพาะอายุ <= 13 ปี (ใช้คอลัมน์ 'age')
             df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
             
             if not df_jr.empty:
