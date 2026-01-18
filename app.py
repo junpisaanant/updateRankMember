@@ -9,10 +9,8 @@ from streamlit_calendar import calendar
 import pytz 
 
 # ================= CONFIGURATION =================
-# ✅ ต้องเป็นคำสั่งแรกสุด ห้ามย้าย
 st.set_page_config(page_title="LSX Ranking", page_icon="🏆", layout="wide")
 
-# 🔥 จัดการ Timezone ให้เป็นไทยเสมอ
 THAI_TZ = pytz.timezone('Asia/Bangkok')
 
 def get_thai_date():
@@ -30,7 +28,6 @@ MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09"
 PROJECT_DB_ID = "26fe6d24b97d80e1bdb3c2452a31694c"
 NEWS_DB_ID = "280e6d24b97d806fa7c8e8bd4ca717f8" 
 
-# วันปิดรับสมัคร
 REGISTRATION_DEADLINE = datetime(2026, 1, 18, 23, 59, 59)
 
 headers = {
@@ -309,13 +306,14 @@ def get_ranking_dataframe():
                 try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
                 except: pass
 
-                # --- คำนวณอายุ ---
+                # --- 1. อายุ (ดึงจากคอลัมน์ 'อายุ' โดยตรง) ---
                 age = 99 
                 try:
-                    b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
-                    if b_str:
-                        b_date = datetime.strptime(b_str, "%Y-%m-%d").date()
-                        age = today.year - b_date.year - ((today.month, today.day) < (b_date.month, b_date.day))
+                    age_prop = props.get("อายุ")
+                    if age_prop:
+                        if age_prop['type'] == 'number': age = age_prop['number'] or 99
+                        elif age_prop['type'] == 'formula': age = age_prop['formula'].get('number', 99)
+                        elif age_prop['type'] == 'rollup': age = age_prop['rollup'].get('number', 99)
                 except: pass
 
                 # --- Rank SS2 (Normal) ---
@@ -371,14 +369,16 @@ def get_ranking_dataframe():
             next_cursor = res.get("next_cursor")
         except: break
     
+    # ✅ ป้องกัน KeyError: กำหนด Columns เสมอ
     cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num', 'rank_jr_str']
     if not members: 
         return pd.DataFrame(columns=cols + ['อันดับ', 'อันดับ Junior'])
     
     df = pd.DataFrame(members)
     
-    # 🔥 FIX: แปลง Data Type ให้เป็นตัวเลขจริงๆ เพื่อการเรียงและกรองที่ถูกต้อง
+    # 🔥 FIX: แปลง Data Type ให้เป็นตัวเลขจริงๆ (Force Numeric)
     df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+    df['rank_num'] = pd.to_numeric(df['rank_num'], errors='coerce').fillna(9999)
     df['score_jr'] = pd.to_numeric(df['score_jr'], errors='coerce').fillna(0)
     df['age'] = pd.to_numeric(df['age'], errors='coerce').fillna(99)
     
@@ -567,8 +567,8 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
                 if not df_dash.empty:
-                    # ✅ เรียงเหมือนเดิม: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
-                    df_normal = df_dash.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+                    # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก) -> ชื่อ (ก->ฮ)
+                    df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
                     
                     st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
@@ -586,7 +586,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
                 if not df_dash.empty:
-                    # ✅ กรองอายุ <= 13 (ใช้ข้อมูลที่แปลงเป็นตัวเลขแล้ว)
+                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ 'age' ที่เป็นตัวเลขแล้ว)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
@@ -684,8 +684,8 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 1: Normal Rank ---
         with tab_lb_main:
             st.subheader("🏆 ตารางอันดับรวม")
-            # ✅ เรียงเหมือนเดิม: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
-            df_main = df_leaderboard.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+            # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก) -> ชื่อ (ก->ฮ)
+            df_main = df_leaderboard.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
             
             st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
                 column_config={ 
@@ -942,11 +942,15 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
         try: score_jr = props.get("คะแนน Rank SS2 Junior", {}).get("rollup", {}).get("number", 0)
         except: score_jr = 0
 
-        # คำนวณอายุ
-        user_age = 0
-        if current_birth:
-            today = date.today()
-            user_age = today.year - current_birth.year - ((today.month, today.day) < (current_birth.month, current_birth.day))
+        # --- อายุ (ดึงจากคอลัมน์ อายุ) ---
+        user_age = 99
+        try:
+            age_prop = props.get("อายุ")
+            if age_prop:
+                if age_prop['type'] == 'number': user_age = age_prop['number'] or 99
+                elif age_prop['type'] == 'formula': user_age = age_prop['formula'].get('number', 99)
+                elif age_prop['type'] == 'rollup': user_age = age_prop['rollup'].get('number', 99)
+        except: pass
 
         col1, col2 = st.columns([1, 2])
         with col1:
