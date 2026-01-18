@@ -323,7 +323,12 @@ def get_ranking_dataframe():
                     if age == 0: age = 99 # ถ้าไม่มีค่า ให้เป็น 99
 
                 # 🔥 2. คะแนนและอันดับ (Normal)
-                score = extract_numeric(props.get("คะแนน Rank SS2"))
+                score = 0
+                sp = props.get("คะแนน Rank SS2") 
+                if sp:
+                    if sp['type'] == 'number': score = sp['number'] or 0
+                    elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
+                    elif sp['type'] == 'formula': score = sp['formula'].get('number', 0) or 0
                 
                 rank_val = 9999
                 try:
