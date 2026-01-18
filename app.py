@@ -318,8 +318,8 @@ def get_ranking_dataframe():
 
                 # --- Rank SS2 (Normal) ---
                 score = 0
-                # 🔥 ดึงคะแนน Rank SS2 ปกติ
-                sp = props.get("คะแนน Rank SS2") 
+                # 🔥 EDITED: ดึงจาก "คะแนน Rank SS2 (Roll Up)" ตามที่ต้องการ
+                sp = props.get("คะแนน Rank SS2 (Roll Up)") 
                 if sp:
                     if sp['type'] == 'number': score = sp['number'] or 0
                     elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
@@ -573,7 +573,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
                     
-                    # ✅ แสดง Score (ที่ดึงมาจาก คะแนน Rank SS2)
+                    # ✅ แสดง Score (ที่ดึงมาจาก คะแนน Rank SS2 (Roll Up))
                     st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
                         column_config={ 
                             "photo": st.column_config.ImageColumn("รูป", width="small"), 
