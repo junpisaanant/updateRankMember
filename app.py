@@ -310,8 +310,7 @@ def get_ranking_dataframe():
                 except: pass
 
                 # --- คำนวณอายุ ---
-                # Default 99 ไว้ก่อน (จะได้ไม่ติดเงื่อนไข <= 13 ถ้าไม่มีข้อมูล)
-                age = 99 
+                age = 99 # ค่า Default แก่สุดไว้ก่อนถ้าไม่มีวันเกิด
                 try:
                     b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
                     if b_str:
@@ -566,7 +565,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
                 if not df_dash.empty and 'score' in df_dash.columns:
-                    # เรียง: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                    # ✅ เรียงเหมือนเดิม: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
                     
@@ -589,7 +588,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
-                        # ✅ เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                        # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                         df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                         df_top10_jr = df_jr.head(10)
                         
@@ -683,7 +682,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 1: Normal Rank ---
         with tab_lb_main:
             st.subheader("🏆 ตารางอันดับรวม")
-            # เรียง: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
+            # ✅ เรียงเหมือนเดิม: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
             df_main = df_leaderboard.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
             
             st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
@@ -701,11 +700,11 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         with tab_lb_jr:
             st.subheader("👶 ตารางอันดับ Junior")
             
-            # กรองเฉพาะอายุ <= 13 ปี
+            # ✅ กรองเฉพาะอายุ <= 13 ปี
             df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
             
             if not df_jr.empty:
-                # เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                 df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                 
                 st.dataframe(df_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
@@ -940,13 +939,14 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
         
         try: score_jr = props.get("คะแนน Rank SS2 Junior", {}).get("rollup", {}).get("number", 0)
         except: score_jr = 0
-        
+
         # คำนวณอายุ
         user_age = 0
         if current_birth:
             today = date.today()
             user_age = today.year - current_birth.year - ((today.month, today.day) < (current_birth.month, current_birth.day))
 
+        # --- ส่วนแสดงผล ---
         col1, col2 = st.columns([1, 2])
         with col1:
             st.image(current_photo, width=150)
