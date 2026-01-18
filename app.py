@@ -310,11 +310,13 @@ def get_ranking_dataframe():
                 except: pass
 
                 # --- คำนวณอายุ ---
-                age = 99 # ค่า Default แก่สุดไว้ก่อนถ้าไม่มีวันเกิด
+                # Default 99 ไว้ก่อน (จะได้ไม่ติดเงื่อนไข <= 13 ถ้าไม่มีข้อมูล)
+                age = 99 
                 try:
                     b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
                     if b_str:
                         b_date = datetime.strptime(b_str, "%Y-%m-%d").date()
+                        # สูตรคำนวณอายุ
                         age = today.year - b_date.year - ((today.month, today.day) < (b_date.month, b_date.day))
                 except: pass
 
@@ -344,12 +346,10 @@ def get_ranking_dataframe():
                     elif sp_jr['type'] == 'formula': score_jr = sp_jr['formula'].get('number', 0) or 0
 
                 rank_jr_val = 9999
-                rank_jr_str = "-"
                 try:
                     r_jr_list = props.get("อันดับ Rank SS2 Junior", {}).get("rich_text", [])
                     if r_jr_list:
                         r_text = r_jr_list[0]["text"]["content"]
-                        rank_jr_str = r_text
                         if "/" in r_text: rank_jr_val = int(r_text.split('/')[0])
                         else: rank_jr_val = int(r_text)
                 except: pass
@@ -366,12 +366,25 @@ def get_ranking_dataframe():
                     "rank_num": rank_val,
                     # Junior
                     "score_jr": score_jr,
-                    "rank_jr_num": rank_jr_val,
-                    "rank_jr_str": rank_jr_str
+                    "rank_jr_num": rank_jr_val
                 })
             has_more = res.get("has_more", False)
             next_cursor = res.get("next_cursor")
         except: break
+    
+    # ✅ ป้องกัน KeyError โดยการกำหนด Columns ให้ครบถ้วนแม้ไม่มีข้อมูล
+    cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num']
+    if not members: 
+        return pd.DataFrame(columns=cols + ['อันดับ', 'อันดับ Junior'])
+    
+    df = pd.DataFrame(members)
+    
+    # เพิ่มคอลัมน์แสดงผล (Mapping)
+    df['อันดับ'] = df['rank_num'] 
+    df['อันดับ Junior'] = df['rank_jr_num']
+    
+    return df
+
     
     if not members: return pd.DataFrame()
     df = pd.DataFrame(members)
@@ -561,7 +574,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             # --- TAB 1: Normal Top 10 ---
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
-                if not df_dash.empty:
+                if not df_dash.empty and 'score' in df_dash.columns:
                     # เรียง: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
@@ -575,17 +588,17 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                             "group": st.column_config.TextColumn("Group") 
                         },
                         hide_index=True, use_container_width=True, height=450)
-                else: st.info("กำลังประมวลผลอันดับ...")
+                else: st.info("กำลังประมวลผลอันดับ... (หรือยังไม่มีข้อมูล)")
 
             # --- TAB 2: Junior Top 10 ---
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
-                if not df_dash.empty:
-                    # กรองอายุ <= 13
+                if not df_dash.empty and 'age' in df_dash.columns:
+                    # ✅ กรองอายุ <= 13
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
-                        # เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                        # ✅ เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                         df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                         df_top10_jr = df_jr.head(10)
                         
@@ -600,7 +613,70 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                             hide_index=True, use_container_width=True, height=450)
                     else:
                         st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
-                else: st.info("กำลังประมวลผลอันดับ...")
+                else: st.info("กำลังประมวลผลอันดับ... (กรุณาลองกดปุ่ม C เพื่อ Clear Cache)")
+
+    with col_d2:
+        # --- กิจกรรมถัดไป ---
+        st.subheader("📅 กิจกรรมถัดไป")
+        with st.spinner("กำลังโหลดกิจกรรมถัดไป..."):
+            next_event = get_upcoming_event()
+            if next_event:
+                with st.container(border=True):
+                    if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
+                    else: st.markdown(f"### {next_event['title']}")
+                    
+                    try:
+                        d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
+                        d_nice = d_obj.strftime("%d %b %Y")
+                        days_left = (d_obj - get_thai_date()).days
+                    except: d_nice = next_event['date']; days_left = 99
+                    st.write(f"🗓️ **วันที่:** {d_nice}")
+                    st.write(f"🏷️ **ประเภท:** {next_event['type']}")
+                    if days_left == 0: st.error("🔥 วันนี้!")
+                    elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
+                    else: st.warning("จบแล้ว")
+                    
+                    if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
+            else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
+
+        # --- รูปภาพล่าสุด ---
+        st.write("") 
+        st.subheader("📸 รูปภาพล่าสุด")
+        gallery = get_photo_gallery()
+        if gallery:
+            latest = gallery[0]
+            with st.container(border=True):
+                st.write(f"**{latest['title']}**")
+                st.caption(f"🗓️ {latest['date_str']}")
+                st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
+        else:
+            st.info("ยังไม่มีรูปภาพ")
+
+    # --- ส่วนประกาศ ---
+    st.write("---")
+    st.subheader("📢 ประกาศล่าสุด")
+    with st.spinner("กำลังโหลดข่าว..."):
+        news_items = get_latest_news(limit=1)
+        if news_items:
+            for item in news_items:
+                with st.container(border=True):
+                    st.markdown(f"**{item['topic']}**")
+                    cat_color = "gray"
+                    if "ประกาศ" in item['category']: cat_color = "red"
+                    elif "กฎ" in item['category']: cat_color = "#2E86C1"
+                    st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
+                    
+                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                    st.write(short_content)
+                    st.caption(f"🗓️ {item['date']}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
+                            show_news_popup(item)
+                    with c2:
+                        if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
+        else: st.info("ไม่มีประกาศใหม่")
 
     with col_d2:
         # --- ส่วนเดิม: กิจกรรมถัดไป ---
@@ -971,4 +1047,5 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown("<div style='text-align: center; color: #888; font-size: 14px;'>Created by LovelyToonZ</div>", unsafe_allow_html=True)
+
 
