@@ -276,11 +276,14 @@ def get_upcoming_event():
     except: pass
     return None
 
-@st.cache_data(ttl=300) 
+@st.cache_data(ttl=300)
 def get_ranking_dataframe():
     url = f"https://api.notion.com/v1/databases/{MEMBER_DB_ID}/query"
     members = []
     has_more = True; next_cursor = None
+    
+    today = date.today()
+
     while has_more:
         payload = { "page_size": 100 }
         if next_cursor: payload["start_cursor"] = next_cursor
@@ -288,15 +291,40 @@ def get_ranking_dataframe():
             res = requests.post(url, json=payload, headers=headers).json()
             for page in res.get("results", []):
                 props = page["properties"]
+                
+                # --- ข้อมูลพื้นฐาน ---
+                name = ""
+                try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
+                except: pass
+
+                photo_url = None
+                try: photo_url = props.get("Photo", {}).get("files", [])[0]["external"]["url"]
+                except: pass
+                
+                group = "-"
+                try: group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
+                except: pass
+                
+                title = "-"
+                try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
+                except: pass
+
+                # --- คำนวณอายุ ---
+                age = 99 # ค่า Default แก่สุดไว้ก่อนถ้าไม่มีวันเกิด
+                try:
+                    b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
+                    if b_str:
+                        b_date = datetime.strptime(b_str, "%Y-%m-%d").date()
+                        age = today.year - b_date.year - ((today.month, today.day) < (b_date.month, b_date.day))
+                except: pass
+
+                # --- Rank SS2 (Normal) ---
                 score = 0
                 sp = props.get("คะแนน Rank SS2") 
                 if sp:
                     if sp['type'] == 'number': score = sp['number'] or 0
                     elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
                     elif sp['type'] == 'formula': score = sp['formula'].get('number', 0) or 0
-                name = ""
-                try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
-                except: pass
                 
                 rank_val = 9999
                 try:
@@ -307,20 +335,39 @@ def get_ranking_dataframe():
                         else: rank_val = int(r_text)
                 except: pass
 
-                photo_url = None
-                try: photo_url = props.get("Photo", {}).get("files", [])[0]["external"]["url"]
+                # --- Rank SS2 (Junior) ---
+                score_jr = 0
+                sp_jr = props.get("คะแนน Rank SS2 Junior") 
+                if sp_jr:
+                    if sp_jr['type'] == 'number': score_jr = sp_jr['number'] or 0
+                    elif sp_jr['type'] == 'rollup': score_jr = sp_jr['rollup'].get('number', 0) or 0
+                    elif sp_jr['type'] == 'formula': score_jr = sp_jr['formula'].get('number', 0) or 0
+
+                rank_jr_val = 9999
+                rank_jr_str = "-"
+                try:
+                    r_jr_list = props.get("อันดับ Rank SS2 Junior", {}).get("rich_text", [])
+                    if r_jr_list:
+                        r_text = r_jr_list[0]["text"]["content"]
+                        rank_jr_str = r_text
+                        if "/" in r_text: rank_jr_val = int(r_text.split('/')[0])
+                        else: rank_jr_val = int(r_text)
                 except: pass
-                group = "-"
-                try: group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
-                except: pass
-                title = "-"
-                try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
-                except: pass
-                
+
                 members.append({ 
-                    "id": page["id"], "score": score, "name": name, 
-                    "photo": photo_url, "group": group, "title": title,
-                    "rank_num": rank_val 
+                    "id": page["id"], 
+                    "name": name, 
+                    "photo": photo_url, 
+                    "group": group, 
+                    "title": title,
+                    "age": age,
+                    # Normal
+                    "score": score, 
+                    "rank_num": rank_val,
+                    # Junior
+                    "score_jr": score_jr,
+                    "rank_jr_num": rank_jr_val,
+                    "rank_jr_str": rank_jr_str
                 })
             has_more = res.get("has_more", False)
             next_cursor = res.get("next_cursor")
@@ -329,10 +376,10 @@ def get_ranking_dataframe():
     if not members: return pd.DataFrame()
     df = pd.DataFrame(members)
     
-    # ✅ ปรับแก้ตรงนี้: เรียงจาก คะแนน (มากไปน้อย) -> ชื่อ (ก-ฮ)
-    df = df.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
-    
+    # เพิ่มคอลัมน์แสดงผล
     df['อันดับ'] = df['rank_num'] 
+    df['อันดับ Junior'] = df['rank_jr_num']
+    
     return df
 
 def upload_image_to_imgbb(image_file):
@@ -505,15 +552,55 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
     col_d1, col_d2 = st.columns([2, 1])
     
     with col_d1:
-        st.subheader("🏆 Top 10 Players")
+        # ใช้ Tabs แบ่งระหว่าง Top 10 ปกติ และ Top 10 Junior
+        tab_top_main, tab_top_jr = st.tabs(["🏆 Top 10 Players", "👶 Top 10 Junior (<=13 ปี)"])
+        
         with st.spinner("โหลดอันดับ..."):
             df_dash = get_ranking_dataframe()
-            if not df_dash.empty:
-                df_top10 = df_dash.head(10)
-                st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
-                    column_config={ "photo": st.column_config.ImageColumn("รูป", width="small"), "อันดับ": st.column_config.NumberColumn("Rank", format="%d"), "name": st.column_config.TextColumn("Player"), "score": st.column_config.NumberColumn("Score", format="%d ⭐"), "group": st.column_config.TextColumn("Group") },
-                    hide_index=True, use_container_width=True, height=450)
-            else: st.info("กำลังประมวลผลอันดับ...")
+            
+            # --- TAB 1: Normal Top 10 ---
+            with tab_top_main:
+                st.subheader("🏆 Top 10 Players")
+                if not df_dash.empty:
+                    # เรียง: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                    df_normal = df_dash.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+                    df_top10 = df_normal.head(10)
+                    
+                    st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
+                        column_config={ 
+                            "photo": st.column_config.ImageColumn("รูป", width="small"), 
+                            "อันดับ": st.column_config.NumberColumn("Rank", format="%d"), 
+                            "name": st.column_config.TextColumn("Player"), 
+                            "score": st.column_config.NumberColumn("Score", format="%d ⭐"), 
+                            "group": st.column_config.TextColumn("Group") 
+                        },
+                        hide_index=True, use_container_width=True, height=450)
+                else: st.info("กำลังประมวลผลอันดับ...")
+
+            # --- TAB 2: Junior Top 10 ---
+            with tab_top_jr:
+                st.subheader("👶 Top 10 Junior")
+                if not df_dash.empty:
+                    # กรองอายุ <= 13
+                    df_jr = df_dash[df_dash['age'] <= 13].copy()
+                    
+                    if not df_jr.empty:
+                        # เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                        df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
+                        df_top10_jr = df_jr.head(10)
+                        
+                        st.dataframe(df_top10_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
+                            column_config={ 
+                                "photo": st.column_config.ImageColumn("รูป", width="small"), 
+                                "อันดับ Junior": st.column_config.NumberColumn("Rank Jr.", format="%d"), 
+                                "name": st.column_config.TextColumn("Player"), 
+                                "score_jr": st.column_config.NumberColumn("Score Jr.", format="%d 🍼"),
+                                "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
+                            },
+                            hide_index=True, use_container_width=True, height=450)
+                    else:
+                        st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
+                else: st.info("กำลังประมวลผลอันดับ...")
 
     with col_d2:
         # --- ส่วนเดิม: กิจกรรมถัดไป ---
@@ -539,22 +626,20 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
             else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
 
-        # --- ส่วนที่ย้ายมาใหม่: รูปภาพล่าสุด (อยู่ใต้กิจกรรมถัดไป) ---
-        st.write("") # เพิ่มช่องว่างเล็กน้อย
+        # --- รูปภาพล่าสุด ---
+        st.write("") 
         st.subheader("📸 รูปภาพล่าสุด")
         gallery = get_photo_gallery()
         if gallery:
             latest = gallery[0]
             with st.container(border=True):
-                # ตกแต่งให้ขนาดเล็กลงพอดีกับ Sidebar ด้านข้าง
                 st.write(f"**{latest['title']}**")
                 st.caption(f"🗓️ {latest['date_str']}")
-                # ถ้าต้องการโชว์รูปตัวอย่างเล็กๆ สามารถเพิ่ม st.image(latest['photo_url']) ได้ที่นี่
                 st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
         else:
             st.info("ยังไม่มีรูปภาพ")
 
-    # --- ส่วนประกาศ (อยู่ด้านล่างแบบเต็มความกว้างเหมือนเดิม หรือจะปรับตามชอบ) ---
+    # --- ส่วนประกาศ ---
     st.write("---")
     st.subheader("📢 ประกาศล่าสุด")
     with st.spinner("กำลังโหลดข่าว..."):
@@ -886,3 +971,4 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown("<div style='text-align: center; color: #888; font-size: 14px;'>Created by LovelyToonZ</div>", unsafe_allow_html=True)
+
