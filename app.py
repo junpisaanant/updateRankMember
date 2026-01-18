@@ -316,7 +316,6 @@ def get_ranking_dataframe():
                     b_str = props.get("วันเกิด", {}).get("date", {}).get("start")
                     if b_str:
                         b_date = datetime.strptime(b_str, "%Y-%m-%d").date()
-                        # สูตรคำนวณอายุ
                         age = today.year - b_date.year - ((today.month, today.day) < (b_date.month, b_date.day))
                 except: pass
 
@@ -346,10 +345,12 @@ def get_ranking_dataframe():
                     elif sp_jr['type'] == 'formula': score_jr = sp_jr['formula'].get('number', 0) or 0
 
                 rank_jr_val = 9999
+                rank_jr_str = "-"
                 try:
                     r_jr_list = props.get("อันดับ Rank SS2 Junior", {}).get("rich_text", [])
                     if r_jr_list:
                         r_text = r_jr_list[0]["text"]["content"]
+                        rank_jr_str = r_text
                         if "/" in r_text: rank_jr_val = int(r_text.split('/')[0])
                         else: rank_jr_val = int(r_text)
                 except: pass
@@ -366,30 +367,21 @@ def get_ranking_dataframe():
                     "rank_num": rank_val,
                     # Junior
                     "score_jr": score_jr,
-                    "rank_jr_num": rank_jr_val
+                    "rank_jr_num": rank_jr_val,
+                    "rank_jr_str": rank_jr_str
                 })
             has_more = res.get("has_more", False)
             next_cursor = res.get("next_cursor")
         except: break
     
-    # ✅ ป้องกัน KeyError โดยการกำหนด Columns ให้ครบถ้วนแม้ไม่มีข้อมูล
-    cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num']
+    # ✅ ป้องกัน KeyError: กำหนด Columns เสมอ
+    cols = ['id', 'name', 'photo', 'group', 'title', 'age', 'score', 'rank_num', 'score_jr', 'rank_jr_num', 'rank_jr_str']
     if not members: 
         return pd.DataFrame(columns=cols + ['อันดับ', 'อันดับ Junior'])
     
     df = pd.DataFrame(members)
     
     # เพิ่มคอลัมน์แสดงผล (Mapping)
-    df['อันดับ'] = df['rank_num'] 
-    df['อันดับ Junior'] = df['rank_jr_num']
-    
-    return df
-
-    
-    if not members: return pd.DataFrame()
-    df = pd.DataFrame(members)
-    
-    # เพิ่มคอลัมน์แสดงผล
     df['อันดับ'] = df['rank_num'] 
     df['อันดับ Junior'] = df['rank_jr_num']
     
@@ -472,8 +464,7 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
     if not properties: return True
     return requests.patch(url, json={"properties": properties}, headers=headers).status_code == 200
 
-# ================= GLOBAL DIALOGS (Moved Here) =================
-# ✅ ย้าย Dialog มาประกาศตรงนี้ (Global Scope) แก้ปัญหา Bad Delta Path
+# ================= GLOBAL DIALOGS =================
 
 @st.dialog("📰 รายละเอียด")
 def show_news_popup(item):
@@ -678,79 +669,58 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                         if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
         else: st.info("ไม่มีประกาศใหม่")
 
-    with col_d2:
-        # --- ส่วนเดิม: กิจกรรมถัดไป ---
-        st.subheader("📅 กิจกรรมถัดไป")
-        with st.spinner("กำลังโหลดกิจกรรมถัดไป..."):
-            next_event = get_upcoming_event()
-            if next_event:
-                with st.container(border=True):
-                    if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
-                    else: st.markdown(f"### {next_event['title']}")
-                    
-                    try:
-                        d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
-                        d_nice = d_obj.strftime("%d %b %Y")
-                        days_left = (d_obj - get_thai_date()).days
-                    except: d_nice = next_event['date']; days_left = 99
-                    st.write(f"🗓️ **วันที่:** {d_nice}")
-                    st.write(f"🏷️ **ประเภท:** {next_event['type']}")
-                    if days_left == 0: st.error("🔥 วันนี้!")
-                    elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
-                    else: st.warning("จบแล้ว")
-                    
-                    if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
-            else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
-
-        # --- รูปภาพล่าสุด ---
-        st.write("") 
-        st.subheader("📸 รูปภาพล่าสุด")
-        gallery = get_photo_gallery()
-        if gallery:
-            latest = gallery[0]
-            with st.container(border=True):
-                st.write(f"**{latest['title']}**")
-                st.caption(f"🗓️ {latest['date_str']}")
-                st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
-        else:
-            st.info("ยังไม่มีรูปภาพ")
-
-    # --- ส่วนประกาศ ---
-    st.write("---")
-    st.subheader("📢 ประกาศล่าสุด")
-    with st.spinner("กำลังโหลดข่าว..."):
-        news_items = get_latest_news(limit=1)
-        if news_items:
-            for item in news_items:
-                with st.container(border=True):
-                    st.markdown(f"**{item['topic']}**")
-                    cat_color = "gray"
-                    if "ประกาศ" in item['category']: cat_color = "red"
-                    elif "กฎ" in item['category']: cat_color = "#2E86C1"
-                    st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
-                    
-                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
-                    st.write(short_content)
-                    st.caption(f"🗓️ {item['date']}")
-                    
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("อ่านต่อ...", key=f"dash_read_{item['id']}"):
-                            show_news_popup(item)
-                    with c2:
-                        if item['url']: st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
-        else: st.info("ไม่มีประกาศใหม่")
-
 # 🏆 PAGE: LEADERBOARD
 elif st.session_state['selected_menu'] == "🏆 ตารางอันดับ":
-    st.subheader("🏆 Leaderboard: อันดับรวมทั้งหมด")
+    st.subheader("🏆 Leaderboard")
+    
     with st.spinner("กำลังโหลดข้อมูลอันดับ..."):
         df_leaderboard = get_ranking_dataframe()
-        if not df_leaderboard.empty:
-            st.dataframe(df_leaderboard[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
-                column_config={ "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"), "name": st.column_config.TextColumn("ชื่อสมาชิก"), "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"), "group": st.column_config.TextColumn("Rank Group"), "title": st.column_config.TextColumn("Rank Title") },
+        
+    if not df_leaderboard.empty:
+        # สร้าง Tabs แยกประเภท
+        tab_lb_main, tab_lb_jr = st.tabs(["🏆 อันดับรวม (Normal)", "👶 อันดับ Junior (<=13 ปี)"])
+        
+        # --- TAB 1: Normal Rank ---
+        with tab_lb_main:
+            st.subheader("🏆 ตารางอันดับรวม")
+            # เรียง: คะแนน (มาก->น้อย) -> ชื่อ (ก->ฮ)
+            df_main = df_leaderboard.sort_values(by=["score", "name"], ascending=[False, True]).reset_index(drop=True)
+            
+            st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
+                column_config={ 
+                    "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
+                    "อันดับ": st.column_config.NumberColumn("อันดับ", format="%d"), 
+                    "name": st.column_config.TextColumn("ชื่อสมาชิก"), 
+                    "score": st.column_config.NumberColumn("คะแนนรวม", format="%d ⭐"), 
+                    "group": st.column_config.TextColumn("Rank Group"), 
+                    "title": st.column_config.TextColumn("Rank Title") 
+                },
                 hide_index=True, use_container_width=True, height=600)
-        else: st.warning("ไม่พบข้อมูลสมาชิก")
+
+        # --- TAB 2: Junior Rank ---
+        with tab_lb_jr:
+            st.subheader("👶 ตารางอันดับ Junior")
+            
+            # กรองเฉพาะอายุ <= 13 ปี
+            df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
+            
+            if not df_jr.empty:
+                # เรียง: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
+                df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
+                
+                st.dataframe(df_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
+                    column_config={ 
+                        "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
+                        "อันดับ Junior": st.column_config.NumberColumn("อันดับ Jr.", format="%d"), 
+                        "name": st.column_config.TextColumn("ชื่อสมาชิก"), 
+                        "score_jr": st.column_config.NumberColumn("คะแนน Jr.", format="%d 🍼"),
+                        "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
+                    },
+                    hide_index=True, use_container_width=True, height=600)
+            else:
+                st.info("ยังไม่มีข้อมูลผู้เล่นรุ่น Junior (อายุไม่เกิน 13 ปี)")
+
+    else: st.warning("ไม่พบข้อมูลสมาชิก")
 
 # 📢 PAGE: NEWS (FULL)
 elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าวสาร":
@@ -963,89 +933,122 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
         try: current_prov = props["มาจากจังหวัด"]["multi_select"][0]["name"]
         except: current_prov = None
         
+        # --- ดึงข้อมูล Junior เพิ่มเติม ---
+        try: rank_jr_list = props.get("อันดับ Rank SS2 Junior", {}).get("rich_text", [])
+        except: rank_jr_list = []
+        full_rank_jr_str = rank_jr_list[0]["text"]["content"] if rank_jr_list else "-"
+        
+        try: score_jr = props.get("คะแนน Rank SS2 Junior", {}).get("rollup", {}).get("number", 0)
+        except: score_jr = 0
+        
+        # คำนวณอายุ
+        user_age = 0
+        if current_birth:
+            today = date.today()
+            user_age = today.year - current_birth.year - ((today.month, today.day) < (current_birth.month, current_birth.day))
+
         col1, col2 = st.columns([1, 2])
         with col1:
             st.image(current_photo, width=150)
             st.divider()
-            try: rank_group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
-            except: rank_group = "-"
-            try: rank_ss2 = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
-            except: rank_ss2 = "-"
-            try: score_ss2 = props.get("คะแนน Rank SS2", {}).get("rollup", {}).get("number", 0)
-            except: score_ss2 = 0
             
-            st.markdown(f"**🏆 Group:** {rank_group}")
-            st.markdown(f"**🎖️ Rank:** {rank_ss2}") 
-            st.metric("⭐ คะแนนรวม", score_ss2)
+            st.markdown(f"**👤 Name:** {current_display}")
+            st.markdown(f"**🎂 Age:** {user_age} ปี")
             st.caption(f"📍 {current_prov if current_prov else '-'}")
             
             st.markdown("---")
-            if st.button(f"🏆 อันดับที่ {full_rank_str}", use_container_width=True):
-                st.session_state['selected_menu'] = '🏆 ตารางอันดับ'; st.rerun() 
-            
-            st.markdown("---")
-            st.markdown("**🔥 สถิติการเข้าร่วม**")
-            st.progress(progress_val)
-            st.caption(f"{stats_str} งาน")
+            if st.button("Logout", type="secondary"):
+                try: cookie_manager.delete("lsx_user_id")
+                except: pass
+                st.session_state['user_page'] = None
+                st.session_state['auth_mode'] = 'login'
+                st.toast("👋 Logout Success"); time.sleep(1); st.rerun()
 
         with col2:
-            st.subheader("📝 แก้ไขข้อมูล")
-            n_name = st.text_input("Display Name", value=current_display)
-            n_birth = st.date_input("วันเกิด", value=current_birth if current_birth else date.today(), min_value=date(1900,1,1), max_value=date.today())
+            # ใช้ Tabs แยกข้อมูล
+            tab_pf_info, tab_pf_jr, tab_pf_edit = st.tabs(["📊 ข้อมูล Rank SS2", "👶 Rank Junior", "📝 แก้ไขข้อมูล"])
             
-            prov_opts = get_province_options()
-            idx = prov_opts.index(current_prov) if current_prov in prov_opts else None
-            n_prov = st.selectbox("มาจากจังหวัด", prov_opts, index=idx, placeholder="เลือกจังหวัด...")
-            
-            st.markdown("---")
-            up_file = st.file_uploader("รูปโปรไฟล์ใหม่", type=['jpg','png'])
-            if up_file: st.image(up_file, width=100)
-            st.markdown("---")
-            n_p1 = st.text_input("เปลี่ยนรหัสผ่าน (ถ้ามี)", type="password")
-            n_p2 = st.text_input("ยืนยันรหัสผ่าน", type="password")
-            
-            if st.button("💾 บันทึกการแก้ไข", type="primary"):
-                err = False; final_url = None
-                if n_p1 and n_p1 != n_p2: st.error("รหัสผ่านไม่ตรงกัน"); err = True
-                if up_file and not err:
-                    with st.spinner("Uploading..."):
-                        l = upload_image_to_imgbb(up_file)
-                        if l: final_url = l
-                        else: err = True
-                if not err:
-                    if update_member_info(page_id, n_name if n_name!=current_display else None, final_url, n_p1 if n_p1 else None, n_birth if n_birth!=current_birth else None, n_prov if n_prov!=current_prov else None):
-                        st.toast("✅ บันทึกสำเร็จ!"); time.sleep(1); st.session_state['user_page'] = get_user_by_id(page_id); st.rerun()
-                    else: st.error("บันทึกไม่สำเร็จ")
+            # Tab 1: Rank SS2 (Normal)
+            with tab_pf_info:
+                st.subheader("🏆 Rank Season 2")
+                try: rank_group = props.get("Rank Season 2 Group", {}).get("formula", {}).get("string") or "-"
+                except: rank_group = "-"
+                try: rank_ss2 = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
+                except: rank_ss2 = "-"
+                try: score_ss2 = props.get("คะแนน Rank SS2", {}).get("rollup", {}).get("number", 0)
+                except: score_ss2 = 0
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Group", rank_group)
+                m2.metric("Rank", rank_ss2)
+                m3.metric("Score", f"{score_ss2} ⭐")
+                
+                if st.button(f"ดูตารางอันดับรวม (ที่ {full_rank_str})", use_container_width=True):
+                    st.session_state['selected_menu'] = '🏆 ตารางอันดับ'; st.rerun() 
+                
+                st.markdown("---")
+                st.markdown("**🔥 สถิติการเข้าร่วม**")
+                st.progress(progress_val)
+                st.caption(f"{stats_str} งาน")
 
-        st.markdown("---")
-        st.header("📜 ประวัติ")
-        h1, h2 = st.columns(2)
-        with h1:
-            st.subheader("Rank History")
-            try: r_ids = [r['id'] for r in props.get("สถิติการลง Rank ทั้งหมด", {}).get("relation", [])]
-            except: r_ids = []
-            if r_ids:
-                with st.container(height=200):
-                    for i in r_ids: st.write(f"• {get_page_title(i)}")
-            else: st.info("-")
-        with h2:
-            st.subheader("Awards")
-            try: aw_ids = [r['id'] for r in props.get("อันดับ 1-4 SS1", {}).get("relation", [])]
-            except: aw_ids = []
-            if aw_ids:
-                with st.container(height=200):
-                    for i in aw_ids: st.success(f"🏅 {get_page_title(i)}")
-            else: st.info("-")
+                st.subheader("📜 Rank History (Normal)")
+                try: r_ids = [r['id'] for r in props.get("สถิติการลง Rank ทั้งหมด", {}).get("relation", [])]
+                except: r_ids = []
+                if r_ids:
+                    with st.container(height=200):
+                        for i in r_ids: st.write(f"• {get_page_title(i)}")
+                else: st.info("-")
 
-        st.markdown("---")
-        if st.button("Logout", type="secondary"):
-            try: cookie_manager.delete("lsx_user_id")
-            except: pass
-            st.session_state['user_page'] = None
-            st.session_state['auth_mode'] = 'login'
-            st.toast("👋 Logout Success"); time.sleep(1); st.rerun()
+            # Tab 2: Rank Junior (NEW)
+            with tab_pf_jr:
+                st.subheader("👶 Rank Season 2 (Junior)")
+                
+                if user_age > 13:
+                    st.warning(f"⚠️ อายุของคุณคือ {user_age} ปี (เกินเกณฑ์ Junior 13 ปี)")
+                
+                mj1, mj2 = st.columns(2)
+                mj1.metric("Junior Rank", full_rank_jr_str)
+                mj2.metric("Junior Score", f"{score_jr} 🍼")
+                
+                st.markdown("---")
+                st.subheader("📜 Rank History (Junior)")
+                try: r_jr_ids = [r['id'] for r in props.get("สถิติการลง Rank Junior ทั้งหมด", {}).get("relation", [])]
+                except: r_jr_ids = [] 
+                
+                if r_jr_ids:
+                    with st.container(height=200):
+                        for i in r_jr_ids: st.write(f"• {get_page_title(i)}")
+                else: st.info("ไม่มีประวัติการแข่ง Junior")
+
+            # Tab 3: Edit Profile
+            with tab_pf_edit:
+                st.subheader("📝 แก้ไขข้อมูลส่วนตัว")
+                n_name = st.text_input("Display Name", value=current_display)
+                n_birth = st.date_input("วันเกิด", value=current_birth if current_birth else date.today(), min_value=date(1900,1,1), max_value=date.today())
+                
+                prov_opts = get_province_options()
+                idx = prov_opts.index(current_prov) if current_prov in prov_opts else None
+                n_prov = st.selectbox("มาจากจังหวัด", prov_opts, index=idx, placeholder="เลือกจังหวัด...")
+                
+                st.markdown("---")
+                up_file = st.file_uploader("รูปโปรไฟล์ใหม่", type=['jpg','png'])
+                if up_file: st.image(up_file, width=100)
+                st.markdown("---")
+                n_p1 = st.text_input("เปลี่ยนรหัสผ่าน (ถ้ามี)", type="password")
+                n_p2 = st.text_input("ยืนยันรหัสผ่าน", type="password")
+                
+                if st.button("💾 บันทึกการแก้ไข", type="primary"):
+                    err = False; final_url = None
+                    if n_p1 and n_p1 != n_p2: st.error("รหัสผ่านไม่ตรงกัน"); err = True
+                    if up_file and not err:
+                        with st.spinner("Uploading..."):
+                            l = upload_image_to_imgbb(up_file)
+                            if l: final_url = l
+                            else: err = True
+                    if not err:
+                        if update_member_info(page_id, n_name if n_name!=current_display else None, final_url, n_p1 if n_p1 else None, n_birth if n_birth!=current_birth else None, n_prov if n_prov!=current_prov else None):
+                            st.toast("✅ บันทึกสำเร็จ!"); time.sleep(1); st.session_state['user_page'] = get_user_by_id(page_id); st.rerun()
+                        else: st.error("บันทึกไม่สำเร็จ")
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown("<div style='text-align: center; color: #888; font-size: 14px;'>Created by LovelyToonZ</div>", unsafe_allow_html=True)
-
-
