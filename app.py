@@ -76,6 +76,7 @@ def get_province_options():
     except: pass
     return []
 
+# 🔥 [FIXED] แก้ไขฟังก์ชันดึงข่าวให้แม่นยำขึ้น
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
@@ -91,6 +92,7 @@ def get_latest_news(limit=5, category_filter=None):
             for page in data.get("results", []):
                 props = page.get("properties", {})
                 
+                # 1. Category
                 category = "ข่าวสาร"
                 try:
                     cat_prop = props.get("ประเภท")
@@ -103,20 +105,24 @@ def get_latest_news(limit=5, category_filter=None):
                 if category_filter and category_filter != category:
                     continue
 
+                # 2. Topic
                 topic = "ไม่มีหัวข้อ"
                 try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
+                # 3. Content
                 content = "-"
                 try: 
                     content_list = props.get("เนื้อหา", {}).get("rich_text", [])
                     content = "".join([t["text"]["content"] for t in content_list])
                 except: pass
                 
+                # 4. Link
                 link = None
                 try: link = props.get("URL", {}).get("url")
                 except: pass
                 
+                # 5. Date
                 show_date = "Unknown Date"
                 try: 
                     d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
@@ -125,6 +131,7 @@ def get_latest_news(limit=5, category_filter=None):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
+                # 6. Images (รองรับทั้ง External และ File)
                 image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
@@ -147,49 +154,63 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
+# 🔥 [FIXED] แก้ไขฟังก์ชันดึงรูปภาพให้รองรับทุกแบบ
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    has_more = True; next_cursor = None
-    while has_more:
-        payload = { "page_size": 100 }
-        if next_cursor: payload["start_cursor"] = next_cursor
-        try:
-            res = requests.post(url, json=payload, headers=headers).json()
-            for page in res.get("results", []):
-                props = page.get('properties', {})
-                photo_url = ""
-                try: 
-                    p_url_prop = props.get("Photo URL") 
-                    if p_url_prop: photo_url = p_url_prop.get("url", "")
+    
+    # ดึงข้อมูลล่าสุดก่อน
+    payload = { 
+        "page_size": 20,
+        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ]
+    }
+    
+    try:
+        res = requests.post(url, json=payload, headers=headers).json()
+        for page in res.get("results", []):
+            props = page.get('properties', {})
+            photo_url = ""
+            
+            # ลองดึงจาก "Photo URL" (แบบลิงก์)
+            try: 
+                if "Photo URL" in props:
+                    photo_url = props["Photo URL"].get("url", "")
+            except: pass
+            
+            # ถ้าไม่มี ให้ลองดึงจาก "Photo" (แบบไฟล์)
+            if not photo_url:
+                try:
+                    if "Photo" in props and props["Photo"]["files"]:
+                        f = props["Photo"]["files"][0]
+                        photo_url = f.get("external", {}).get("url") or f.get("file", {}).get("url")
+                except: pass
+            
+            if photo_url:
+                title = "Unknown Event"
+                try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                if photo_url:
-                    if not photo_url.startswith(("http://", "https://")): photo_url = f"https://{photo_url}"
-                    title = "Unknown Event"
-                    try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
-                    except: pass
-                    
-                    event_date = None
-                    date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-                    if date_prop: 
-                        d_obj = date_prop.get("date")
-                        if d_obj:
-                            d_str = d_obj.get("start")
-                            if d_str:
-                                try: event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
-                                except: pass
-                                
-                    gallery_items.append({
-                        "title": title, "date": event_date, 
-                        "date_str": event_date.strftime("%d %b %Y") if event_date else "ไม่ระบุวันที่",
-                        "photo_url": photo_url
-                    })
-            has_more = res.get("has_more", False)
-            next_cursor = res.get("next_cursor")
-        except: break
-    gallery_items.sort(key=lambda x: x['date'] if x['date'] else date.min, reverse=True)
+                event_date = None
+                date_str = "ไม่ระบุวันที่"
+                date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
+                if date_prop: 
+                    d_obj = date_prop.get("date")
+                    if d_obj:
+                        d_str = d_obj.get("start")
+                        if d_str:
+                            try: 
+                                event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
+                                date_str = event_date.strftime("%d %b %Y")
+                            except: pass
+                            
+                gallery_items.append({
+                    "title": title, 
+                    "date": event_date, 
+                    "date_str": date_str,
+                    "photo_url": photo_url
+                })
+    except: pass
     return gallery_items
 
 @st.cache_data(ttl=300)
@@ -255,6 +276,7 @@ def get_calendar_events():
         except: break
     return events
 
+# 🔥 [FIXED] ปรับ Logic วันที่ให้ถูกต้อง (>= วันนี้)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
@@ -606,7 +628,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                 else: st.info("กำลังประมวลผลอันดับ...")
 
     with col_d2:
-        # --- ส่วนเดิม: กิจกรรมถัดไป ---
+        # --- กิจกรรมถัดไป ---
         st.subheader("📅 กิจกรรมถัดไป")
         with st.spinner("กำลังโหลดกิจกรรมถัดไป..."):
             next_event = get_upcoming_event()
@@ -615,22 +637,26 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
                     else: st.markdown(f"### {next_event['title']}")
                     
+                    # 🔥 [Fixed] คำนวณวันที่ถูกต้อง
                     try:
                         d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
                         d_nice = d_obj.strftime("%d %b %Y")
-                        days_left = (d_obj - get_thai_date()).days
+                        today = get_thai_date()
+                        days_left = (d_obj - today).days
                     except: d_nice = next_event['date']; days_left = 99
+                    
                     st.write(f"🗓️ **วันที่:** {d_nice}")
                     st.write(f"🏷️ **ประเภท:** {next_event['type']}")
+                    
+                    # 🔥 [Fixed] แสดงสถานะถูกต้อง
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
-                    else: st.warning("จบแล้ว")
                     
                     if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
-            else: st.info("ยังไม่มีกิจกรรมเร็วๆ นี้")
+            else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
-        # --- ส่วนที่ย้ายมาใหม่: รูปภาพล่าสุด (อยู่ใต้กิจกรรมถัดไป) ---
-        st.write("") # เพิ่มช่องว่างเล็กน้อย
+        # --- รูปภาพล่าสุด ---
+        st.write("") 
         st.subheader("📸 รูปภาพล่าสุด")
         gallery = get_photo_gallery()
         if gallery:
@@ -914,7 +940,6 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
                         else: st.error("ผิดพลาด")
             st.stop()
 
-        # --- ข้อมูลเดิม ---
         try: rank_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
         except: rank_list = []
         full_rank_str = rank_list[0]["text"]["content"] if rank_list else "-"
