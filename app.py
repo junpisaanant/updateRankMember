@@ -18,17 +18,15 @@ def get_thai_date():
 
 try:
     NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-    IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "0e31066455b60d727553d11e22761846") 
+    IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "") 
 except FileNotFoundError:
-    NOTION_TOKEN = "Please_Check_Secrets_File"
-    IMGBB_API_KEY = "Please_Check_Secrets_File"
+    NOTION_TOKEN = "CHECK_SECRETS"
+    IMGBB_API_KEY = ""
 
-# 📌 ID
 MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09" 
 PROJECT_DB_ID = "26fe6d24b97d80e1bdb3c2452a31694c"
 NEWS_DB_ID = "280e6d24b97d806fa7c8e8bd4ca717f8" 
 
-# วันปิดรับสมัคร
 REGISTRATION_DEADLINE = datetime(2026, 1, 18, 23, 59, 59)
 
 headers = {
@@ -39,29 +37,29 @@ headers = {
 
 # ================= HELPER FUNCTIONS =================
 
-# 🔥 [NEW] ฟังก์ชันช่วยดึงค่าตัวเลขจาก Notion ให้ชัวร์ (ป้องกัน Error เรียงลำดับ)
+# 🔥 ฟังก์ชันช่วยดึงค่าตัวเลขจาก Notion (รองรับ Number, Formula, Rollup)
 def extract_numeric(prop):
     if not prop: return 0
-    ptype = prop.get('type')
+    p_type = prop.get('type')
     val = 0
-    if ptype == 'number': val = prop.get('number')
-    elif ptype == 'rollup': val = prop.get('rollup', {}).get('number')
-    elif ptype == 'formula': val = prop.get('formula', {}).get('number')
+    if p_type == 'number': val = prop.get('number')
+    elif p_type == 'rollup': val = prop.get('rollup', {}).get('number')
+    elif p_type == 'formula': val = prop.get('formula', {}).get('number')
     return val if val is not None else 0
 
 @st.cache_data(show_spinner=False)
 def get_page_title(page_id):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            for prop_val in data["properties"].values():
-                if prop_val["type"] == "title":
-                    if prop_val["title"]: return prop_val["title"][0]["text"]["content"]
-                    else: return "No Title"
-        return "Unknown Page"
-    except: return "Error Loading"
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            # ใช้ loop หา title property name อะไรก็ได้
+            for key, prop_val in data["properties"].items():
+                if prop_val["type"] == "title" and prop_val["title"]:
+                    return prop_val["title"][0]["text"]["content"]
+        return "-"
+    except: return "-"
 
 @st.cache_data(ttl=3600)
 def get_province_options():
@@ -72,11 +70,11 @@ def get_province_options():
             props = res.json().get("properties", {})
             if "มาจากจังหวัด" in props:
                 options = props["มาจากจังหวัด"].get("multi_select", {}).get("options", [])
-                return [opt["name"] for opt in options]
+                return [o["name"] for o in options]
     except: pass
     return []
 
-# 🔥 [FIXED] แก้ไขฟังก์ชันดึงข่าวให้แม่นยำขึ้น
+# 🔥 [FIXED] ดึงข่าวแบบปลอดภัย (ไม่ Error แม้บางฟิลด์หาย)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
@@ -84,6 +82,10 @@ def get_latest_news(limit=5, category_filter=None):
         "page_size": limit, 
         "sorts": [ { "property": "วันที่ประกาศ", "direction": "descending" } ]
     }
+    # ถ้ามี filter ให้เพิ่มเข้าไป
+    if category_filter:
+        payload["filter"] = {"property": "ประเภท", "select": {"equals": category_filter}}
+
     news_list = []
     try:
         res = requests.post(url, json=payload, headers=headers)
@@ -92,7 +94,12 @@ def get_latest_news(limit=5, category_filter=None):
             for page in data.get("results", []):
                 props = page.get("properties", {})
                 
-                # 1. Category
+                # 1. หัวข้อ (Topic)
+                topic = "ไม่มีหัวข้อ"
+                try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
+                except: pass
+                
+                # 2. ประเภท (Category)
                 category = "ข่าวสาร"
                 try:
                     cat_prop = props.get("ประเภท")
@@ -102,28 +109,23 @@ def get_latest_news(limit=5, category_filter=None):
                         category = cat_prop['multi_select'][0]['name']
                 except: pass
 
-                if category_filter and category_filter != category:
-                    continue
+                # กรอง category (เผื่อ API filter หลุด)
+                if category_filter and category_filter != category: continue
 
-                # 2. Topic
-                topic = "ไม่มีหัวข้อ"
-                try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
-                except: pass
-                
-                # 3. Content
+                # 3. เนื้อหา (Content)
                 content = "-"
                 try: 
                     content_list = props.get("เนื้อหา", {}).get("rich_text", [])
                     content = "".join([t["text"]["content"] for t in content_list])
                 except: pass
                 
-                # 4. Link
+                # 4. ลิงก์ (URL)
                 link = None
                 try: link = props.get("URL", {}).get("url")
                 except: pass
                 
-                # 5. Date
-                show_date = "Unknown Date"
+                # 5. วันที่ (Date)
+                show_date = "ไม่ระบุวันที่"
                 try: 
                     d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
                     if d_str:
@@ -131,7 +133,7 @@ def get_latest_news(limit=5, category_filter=None):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
-                # 6. Images (รองรับทั้ง External และ File)
+                # 6. รูปภาพ (Images)
                 image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
@@ -143,28 +145,19 @@ def get_latest_news(limit=5, category_filter=None):
                 except: pass
                 
                 news_list.append({ 
-                    "id": page["id"],
-                    "topic": topic, 
-                    "content": content, 
-                    "url": link, 
-                    "date": show_date,
-                    "category": category,
-                    "image_urls": image_urls
+                    "id": page["id"], "topic": topic, "content": content, 
+                    "url": link, "date": show_date, "category": category, "image_urls": image_urls
                 })
     except: pass
     return news_list
 
-# 🔥 [FIXED] แก้ไขฟังก์ชันดึงรูปภาพให้รองรับทุกแบบ
+# 🔥 [FIXED] ดึงแกลเลอรีแบบปลอดภัย
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    
-    # ดึงข้อมูลล่าสุดก่อน
-    payload = { 
-        "page_size": 20,
-        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ]
-    }
+    # ดึง 20 รายการล่าสุด
+    payload = { "page_size": 20, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
     
     try:
         res = requests.post(url, json=payload, headers=headers).json()
@@ -172,13 +165,12 @@ def get_photo_gallery():
             props = page.get('properties', {})
             photo_url = ""
             
-            # ลองดึงจาก "Photo URL" (แบบลิงก์)
+            # ลองดึงจาก "Photo URL"
             try: 
-                if "Photo URL" in props:
-                    photo_url = props["Photo URL"].get("url", "")
+                if "Photo URL" in props: photo_url = props["Photo URL"].get("url", "")
             except: pass
             
-            # ถ้าไม่มี ให้ลองดึงจาก "Photo" (แบบไฟล์)
+            # ถ้าไม่มี ลองดึงจาก "Photo"
             if not photo_url:
                 try:
                     if "Photo" in props and props["Photo"]["files"]:
@@ -191,24 +183,19 @@ def get_photo_gallery():
                 try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                event_date = None
                 date_str = "ไม่ระบุวันที่"
                 date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
                 if date_prop: 
-                    d_obj = date_prop.get("date")
-                    if d_obj:
-                        d_str = d_obj.get("start")
-                        if d_str:
-                            try: 
-                                event_date = datetime.strptime(d_str, "%Y-%m-%d").date()
-                                date_str = event_date.strftime("%d %b %Y")
-                            except: pass
-                            
+                    try:
+                        d_obj = date_prop.get("date")
+                        if d_obj:
+                            d_str = d_obj.get("start")
+                            if d_str:
+                                date_str = datetime.strptime(d_str, "%Y-%m-%d").strftime("%d %b %Y")
+                    except: pass
+                                
                 gallery_items.append({
-                    "title": title, 
-                    "date": event_date, 
-                    "date_str": date_str,
-                    "photo_url": photo_url
+                    "title": title, "date_str": date_str, "photo_url": photo_url
                 })
     except: pass
     return gallery_items
@@ -230,6 +217,7 @@ def get_calendar_events():
                 title = "Unknown Event"
                 try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
                 except: pass
+                
                 event_type = "ทั่วไป"
                 if 'ประเภทงาน' in props:
                     pt = props['ประเภทงาน']
@@ -243,11 +231,8 @@ def get_calendar_events():
                     if d_obj: event_date_str = d_obj.get("start")
                 
                 event_url = ""
-                try: 
-                    url_prop = props.get("URL")
-                    if url_prop: event_url = url_prop.get("url", "")
+                try: event_url = props.get("URL", {}).get("url", "#")
                 except: pass
-                if event_url and not event_url.startswith(("http://", "https://")): event_url = f"https://{event_url}"
                 
                 if event_date_str:
                     try:
@@ -256,11 +241,9 @@ def get_calendar_events():
                             bg_color = "#FF4B4B" 
                             display_tag = event_type
                             if "งานย่อย" in str(event_type): 
-                                bg_color = "#708090" 
-                                display_tag = "Side Event"
+                                bg_color = "#708090"; display_tag = "Side Event"
                             elif "งานใหญ่" in str(event_type): 
-                                bg_color = "#FFD700" 
-                                display_tag = "Main Event"
+                                bg_color = "#FFD700"; display_tag = "Main Event"
                             
                             events.append({
                                 "title": f"[{display_tag}] {title}", 
@@ -268,7 +251,7 @@ def get_calendar_events():
                                 "backgroundColor": bg_color, 
                                 "borderColor": bg_color, 
                                 "allDay": True,
-                                "extendedProps": { "url": event_url if event_url else "#" }
+                                "extendedProps": { "url": event_url }
                             })
                     except: pass
             has_more = res.get("has_more", False)
@@ -276,23 +259,37 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [FIXED] ปรับ Logic วันที่ให้ถูกต้อง (>= วันนี้)
+# 🔥 [FIXED] ดึงกิจกรรมถัดไป (เช็คทั้ง 2 ชื่อคอลัมน์ + กรอง >= วันนี้)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     today_str = get_thai_date().strftime("%Y-%m-%d")
+    
+    # ลองใช้ Filter แบบกว้างๆ ก่อน แล้วมาคัดใน Python เพื่อความชัวร์เรื่องชื่อคอลัมน์
     payload = {
         "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": today_str } },
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
         "page_size": 1
     }
+    
     try:
         res = requests.post(url, json=payload, headers=headers).json()
+        
+        # ถ้าหาไม่เจอ ลองหาด้วยชื่อ "วันที่จัดงาน" (Fallback)
+        if not res.get("results"):
+            payload["filter"] = { "property": "วันที่จัดงาน", "date": { "on_or_after": today_str } }
+            payload["sorts"] = [ { "property": "วันที่จัดงาน", "direction": "ascending" } ]
+            res = requests.post(url, json=payload, headers=headers).json()
+
         if res.get("results"):
             page = res["results"][0]
             props = page.get('properties', {})
             title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
-            d_str = props.get("วันที่จัดกิจกรรม", {}).get("date", {}).get("start")
+            
+            d_str = None
+            date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
+            if date_prop: d_str = date_prop.get("date", {}).get("start")
+            
             event_type = "ทั่วไป"
             if 'ประเภทงาน' in props:
                 pt = props['ประเภทงาน']
@@ -338,20 +335,14 @@ def get_ranking_dataframe():
                 try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
                 except: pass
 
-                # 🔥 1. ดึงอายุ (จากคอลัมน์ 'อายุ' ตรงๆ ไม่คำนวณวันเกิด)
+                # 🔥 1. ดึงอายุ (จากคอลัมน์ 'อายุ' ตรงๆ)
                 age = 99 
                 if "อายุ" in props:
                     age = extract_numeric(props["อายุ"])
-                    if age == 0: age = 99 # ถ้าไม่มีค่า ให้เป็น 99
+                    if age == 0: age = 99 
 
                 # 🔥 2. คะแนนและอันดับ (Normal)
-                score = 0
-                sp = props.get("คะแนน Rank SS2") 
-                if sp:
-                    if sp['type'] == 'number': score = sp['number'] or 0
-                    elif sp['type'] == 'rollup': score = sp['rollup'].get('number', 0) or 0
-                    elif sp['type'] == 'formula': score = sp['formula'].get('number', 0) or 0
-                
+                score = extract_numeric(props.get("คะแนน Rank SS2"))
                 rank_val = 9999
                 try:
                     r_list = props.get("อันดับ Rank SS2", {}).get("rich_text", [])
@@ -363,7 +354,6 @@ def get_ranking_dataframe():
 
                 # 🔥 3. คะแนนและอันดับ (Junior)
                 score_jr = extract_numeric(props.get("คะแนน Rank SS2 Junior"))
-                
                 rank_jr_val = 9999
                 try:
                     r_jr_list = props.get("อันดับ Rank SS2 Junior", {}).get("rich_text", [])
@@ -389,7 +379,6 @@ def get_ranking_dataframe():
             next_cursor = res.get("next_cursor")
         except: break
     
-    # สร้าง DataFrame และบังคับ Type เป็นตัวเลข (Force Numeric) เพื่อให้เรียง/กรองได้ถูกต้อง
     if not members: 
         return pd.DataFrame(columns=['id','name','photo','score','rank_num','score_jr','rank_jr_num','age','อันดับ','อันดับ Junior'])
     
@@ -401,7 +390,6 @@ def get_ranking_dataframe():
     df['rank_jr_num'] = pd.to_numeric(df['rank_jr_num'], errors='coerce').fillna(9999)
     df['age'] = pd.to_numeric(df['age'], errors='coerce').fillna(99)
     
-    # Mapping ชื่อคอลัมน์สำหรับแสดงผล
     df['อันดับ'] = df['rank_num'] 
     df['อันดับ Junior'] = df['rank_jr_num']
     
@@ -484,9 +472,7 @@ def update_member_info(page_id, new_display_name, new_photo_url, new_password, n
     if not properties: return True
     return requests.patch(url, json={"properties": properties}, headers=headers).status_code == 200
 
-# ================= GLOBAL DIALOGS (Moved Here) =================
-# ✅ ย้าย Dialog มาประกาศตรงนี้ (Global Scope) แก้ปัญหา Bad Delta Path
-
+# ================= GLOBAL DIALOGS =================
 @st.dialog("📰 รายละเอียด")
 def show_news_popup(item):
     st.subheader(item['topic'])
@@ -517,14 +503,10 @@ st.title("🏆LSX Ranking")
 
 cookie_manager = stx.CookieManager(key="lsx_cookie_manager")
 
-if 'user_page' not in st.session_state: 
-    st.session_state['user_page'] = None
-if 'selected_menu' not in st.session_state: 
-    st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
-if 'auth_mode' not in st.session_state: 
-    st.session_state['auth_mode'] = 'login' 
-if 'last_clicked_event' not in st.session_state: 
-    st.session_state['last_clicked_event'] = None
+if 'user_page' not in st.session_state: st.session_state['user_page'] = None
+if 'selected_menu' not in st.session_state: st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
+if 'auth_mode' not in st.session_state: st.session_state['auth_mode'] = 'login' 
+if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_event'] = None
 
 if 'cookie_checked' not in st.session_state:
     st.session_state['cookie_checked'] = False
@@ -637,7 +619,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
                     else: st.markdown(f"### {next_event['title']}")
                     
-                    # 🔥 [Fixed] คำนวณวันที่ถูกต้อง
                     try:
                         d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
                         d_nice = d_obj.strftime("%d %b %Y")
@@ -648,7 +629,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     st.write(f"🗓️ **วันที่:** {d_nice}")
                     st.write(f"🏷️ **ประเภท:** {next_event['type']}")
                     
-                    # 🔥 [Fixed] แสดงสถานะถูกต้อง
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
@@ -666,7 +646,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                 st.caption(f"🗓️ {latest['date_str']}")
                 st.link_button("🖼️ ดูอัลบั้มนี้", latest['photo_url'], use_container_width=True)
         else:
-            st.info("ยังไม่มีรูปภาพ")
+            st.info("ไม่มีรูปภาพ")
 
     # --- ส่วนประกาศ ---
     st.write("---")
