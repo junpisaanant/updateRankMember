@@ -4,7 +4,7 @@ import time
 import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
-# import extra_streamlit_components as stx # ปิดตัวนี้ชั่วคราวเพื่อแก้หน้าจอขาว
+# import extra_streamlit_components as stx # ปิดชั่วคราวแก้หน้าขาว
 from streamlit_calendar import calendar
 import pytz 
 
@@ -145,9 +145,8 @@ def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # ดึง 50 รายการล่าสุด
     payload = { 
-        "page_size": 50, 
+        "page_size": 100, 
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
     }
     
@@ -158,12 +157,10 @@ def get_photo_gallery():
             for page in data.get("results", []):
                 props = page.get('properties', {})
                 
-                # 1. เช็คว่ามี Photo URL หรือไม่
                 photo_url = None
                 if "Photo URL" in props:
                     photo_url = props["Photo URL"].get("url")
                 
-                # ถ้ามี Link รูป ค่อยดึงข้อมูลอื่นต่อ
                 if photo_url:
                     title = "กิจกรรม (ไม่ระบุชื่อ)"
                     if "ชื่อกิจกรรม" in props:
@@ -305,8 +302,11 @@ def get_upcoming_event():
                 except: pass
 
                 return {
-                    "title": title, "date": d_str, "type": event_type, 
-                    "url": event_url, "details": details_text
+                    "title": title, 
+                    "date": d_str, 
+                    "type": event_type, 
+                    "url": event_url, 
+                    "details": details_text 
                 }
         else:
             print(f"Error fetching event: {res.status_code}")
@@ -549,8 +549,10 @@ with st.sidebar:
     
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
+    # 🔥 [FIXED] แก้ KeyError ตรงนี้
     def update_menu():
-        st.session_state['selected_menu'] = st.session_state['menu_selection']
+        if 'menu_selection' in st.session_state:
+            st.session_state['selected_menu'] = st.session_state['menu_selection']
         st.session_state['calendar_force_key'] = str(uuid.uuid4())
 
     if 'calendar_force_key' not in st.session_state:
@@ -651,13 +653,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
+                    # ✅ เพิ่มปุ่มรายละเอียดเพิ่มเติม
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
                             show_event_popup(next_event['title'], next_event['details'], next_event['url'])
                     with c2:
-                        if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าลงทะเบียน", next_event['url'], use_container_width=True)
             else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
@@ -996,8 +998,8 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
             
             st.markdown("---")
             if st.button("Logout", type="secondary"):
-                # try: cookie_manager.delete("lsx_user_id")
-                # except: pass
+                try: cookie_manager.delete("lsx_user_id")
+                except: pass
                 st.session_state['user_page'] = None
                 st.session_state['auth_mode'] = 'login'
                 st.toast("👋 Logout Success"); time.sleep(1); st.rerun()
