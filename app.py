@@ -164,7 +164,8 @@ def get_latest_news(limit=5, category_filter=None):
         pass
     return news_list
 
-# 🔥 [FIXED] ดึงแกลเลอรีแบบปลอดภัย (เอาแค่ชื่อ + ลิงก์)
+
+# 🔥 [FIXED] ดึงแกลเลอรีแบบปลอดภัย + แจ้งเตือน Error
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
@@ -172,22 +173,30 @@ def get_photo_gallery():
     payload = { "page_size": 20, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
     
     try:
-        res = requests.post(url, json=payload, headers=headers).json()
-        for page in res.get("results", []):
+        res = requests.post(url, json=payload, headers=headers)
+        
+        # 🚨 ถ้า Notion Error ให้แสดงออกมาเลย จะได้รู้
+        if res.status_code != 200:
+            st.error(f"Gallery Error: {res.status_code} - {res.text}")
+            return []
+
+        data = res.json()
+        for page in data.get("results", []):
             props = page.get('properties', {})
             
             # 1. หา Link อัลบั้ม
             album_url = safe_get_text(props, "Photo URL", None)
             # ถ้าไม่มี ให้ลองหาจากไฟล์แนบ (เผื่อคนใส่ผิด)
-            if not album_url:
+            if not album_url or album_url == "-":
                 imgs = safe_get_image(props, "Photo")
                 if imgs: album_url = imgs[0]
             
-            # ถ้ามี Link ค่อยเอามาแสดง
-            if album_url:
+            # 2. ถ้ามี Link ค่อยเอามาแสดง
+            if album_url and album_url != "-":
                 title = safe_get_text(props, "ชื่อกิจกรรม", "Unknown Event")
                 raw_date = safe_get_date(props, "วันที่จัดกิจกรรม") or safe_get_date(props, "วันที่จัดงาน")
-                date_str = "ไม่ระบุวันที่"
+                
+                date_str = "-"
                 if raw_date:
                     try: date_str = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d %b %Y")
                     except: pass
@@ -195,7 +204,10 @@ def get_photo_gallery():
                 gallery_items.append({
                     "title": title, "date_str": date_str, "album_url": album_url
                 })
-    except: pass
+    except Exception as e:
+        st.error(f"System Error: {e}")
+        return []
+        
     return gallery_items
 
 @st.cache_data(ttl=300)
