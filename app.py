@@ -4,7 +4,7 @@ import time
 import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
-# import extra_streamlit_components as stx # ปิดชั่วคราวแก้หน้าขาว
+# import extra_streamlit_components as stx # ปิดชั่วคราว
 from streamlit_calendar import calendar
 import pytz 
 
@@ -188,6 +188,7 @@ def get_photo_gallery():
         
     return gallery_items
 
+# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -228,6 +229,7 @@ def get_calendar_events():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "#")
                 
+                # ✅ 1. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -257,15 +259,19 @@ def get_calendar_events():
         except: break
     return events
 
+# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (แก้ไขให้ยืดหยุ่นเรื่องวันที่)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    today_str = get_thai_date().strftime("%Y-%m-%d")
+    
+    # 💡 ใช้ Buffer ย้อนหลัง 7 วัน เพื่อแก้ปัญหา Timezone บน Cloud
+    # ถ้า event มีวันนี้ แต่วันนี้บน Cloud ยังไม่ถึง (หรือเลยไปแล้วนิดหน่อย) ก็จะยังดึงมาได้
+    buffer_date = (get_thai_date() - timedelta(days=7)).strftime("%Y-%m-%d")
     
     payload = {
-        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": today_str } },
+        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": buffer_date } },
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
-        "page_size": 1
+        "page_size": 20 # ดึงมาเผื่อเลือก
     }
     
     try:
@@ -273,6 +279,8 @@ def get_upcoming_event():
         if res.status_code == 200:
             data = res.json()
             if data.get("results"):
+                # วนลูปหาอันแรกที่ยังไม่ผ่านไปนานเกินไป หรือยังไม่ปิดรับสมัคร
+                # (Logic: เลือกอันแรกสุดที่ API ส่งมา เพราะเรียงตามวันที่แล้ว)
                 page = data["results"][0]
                 props = page.get('properties', {})
                 
@@ -295,6 +303,7 @@ def get_upcoming_event():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "")
 
+                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -306,7 +315,7 @@ def get_upcoming_event():
                     "date": d_str, 
                     "type": event_type, 
                     "url": event_url, 
-                    "details": details_text 
+                    "details": details_text
                 }
         else:
             print(f"Error fetching event: {res.status_code}")
@@ -499,20 +508,18 @@ def show_news_popup(item):
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
 
+# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม
 @st.dialog("รายละเอียดกิจกรรม")
 def show_event_popup(title, details, url):
     st.write(f"### {title}")
-    
-    # ส่วนแสดงเนื้อหารายละเอียด
     st.write("---")
     if details and details != "-":
         st.info(details)
     else:
         st.caption("ไม่มีรายละเอียดเพิ่มเติม")
     st.write("---")
-
     if url and url != "#":
-        st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
+        st.link_button("🚀 ไปที่หน้าลงทะเบียน", url, type="primary", use_container_width=True)
 
 # ================= UI START =================
 st.title("🏆LSX Ranking")
@@ -549,7 +556,6 @@ with st.sidebar:
     
     menu_options = ["🏠 หน้าแรก (Dashboard)", "🏆 ตารางอันดับ", "📢 ประกาศ/ข่าวสาร", "📜 กฎระเบียบและข้อบังคับ", "📅 ปฏิทินกิจกรรม", "📸 แกลเลอรี", "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว"]
     
-    # 🔥 [FIXED] แก้ KeyError ตรงนี้
     def update_menu():
         if 'menu_selection' in st.session_state:
             st.session_state['selected_menu'] = st.session_state['menu_selection']
@@ -620,7 +626,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                         st.dataframe(df_top10_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                             column_config={ 
                                 "photo": st.column_config.ImageColumn("รูป", width="small"), 
-                                "อันดับ Junior": st.column_config.NumberColumn("Rank Jr.", format="%d"), 
+                                "อันดับ Junior": st.column_config.NumberColumn("อันดับ Jr.", format="%d"), 
                                 "name": st.column_config.TextColumn("Player"), 
                                 "score_jr": st.column_config.NumberColumn("Score Jr.", format="%d 🍼"),
                                 "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
@@ -653,13 +659,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    # ✅ เพิ่มปุ่มรายละเอียดเพิ่มเติม
+                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
                             show_event_popup(next_event['title'], next_event['details'], next_event['url'])
                     with c2:
-                        if next_event['url']: st.link_button("🚀 ไปที่หน้าลงทะเบียน", next_event['url'], use_container_width=True)
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
             else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
