@@ -37,7 +37,6 @@ headers = {
 
 # ================= HELPER FUNCTIONS =================
 
-# 🔥 ฟังก์ชันช่วยดึงค่าตัวเลขจาก Notion (รองรับ Number, Formula, Rollup)
 def extract_numeric(prop):
     if not prop: return 0
     p_type = prop.get('type')
@@ -54,7 +53,6 @@ def get_page_title(page_id):
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             data = res.json()
-            # ใช้ loop หา title property name อะไรก็ได้
             for key, prop_val in data["properties"].items():
                 if prop_val["type"] == "title" and prop_val["title"]:
                     return prop_val["title"][0]["text"]["content"]
@@ -74,7 +72,6 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 [FIXED] ดึงข่าวแบบปลอดภัย (ไม่ Error แม้บางฟิลด์หาย)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
@@ -82,7 +79,6 @@ def get_latest_news(limit=5, category_filter=None):
         "page_size": limit, 
         "sorts": [ { "property": "วันที่ประกาศ", "direction": "descending" } ]
     }
-    # ถ้ามี filter ให้เพิ่มเข้าไป
     if category_filter:
         payload["filter"] = {"property": "ประเภท", "select": {"equals": category_filter}}
 
@@ -94,12 +90,10 @@ def get_latest_news(limit=5, category_filter=None):
             for page in data.get("results", []):
                 props = page.get("properties", {})
                 
-                # 1. หัวข้อ (Topic)
                 topic = "ไม่มีหัวข้อ"
                 try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
                 
-                # 2. ประเภท (Category)
                 category = "ข่าวสาร"
                 try:
                     cat_prop = props.get("ประเภท")
@@ -109,22 +103,18 @@ def get_latest_news(limit=5, category_filter=None):
                         category = cat_prop['multi_select'][0]['name']
                 except: pass
 
-                # กรอง category (เผื่อ API filter หลุด)
                 if category_filter and category_filter != category: continue
 
-                # 3. เนื้อหา (Content)
                 content = "-"
                 try: 
                     content_list = props.get("เนื้อหา", {}).get("rich_text", [])
                     content = "".join([t["text"]["content"] for t in content_list])
                 except: pass
                 
-                # 4. ลิงก์ (URL)
                 link = None
                 try: link = props.get("URL", {}).get("url")
                 except: pass
                 
-                # 5. วันที่ (Date)
                 show_date = "ไม่ระบุวันที่"
                 try: 
                     d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
@@ -133,7 +123,6 @@ def get_latest_news(limit=5, category_filter=None):
                         show_date = d_obj.strftime("%d/%m/%Y")
                 except: pass
 
-                # 6. รูปภาพ (Images)
                 image_urls = []
                 try:
                     img_files = props.get("ภาพประกอบ", {}).get("files", [])
@@ -151,72 +140,78 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
-# 🔥 [FIXED] ดึงแกลเลอรีแบบปลอดภัย
+# 🔥 [UPDATED] ดึงแกลเลอรี (รองรับ Page Cover + Photo URL)
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    # ดึง 20 รายการล่าสุด
-    payload = { "page_size": 20, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
+    
+    # ดึงเฉพาะรายการที่มีรูปปก หรือ มี Photo URL
+    payload = { 
+        "page_size": 20, 
+        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
+    }
     
     try:
-        res = requests.post(url, json=payload, headers=headers).json()
-        for page in res.get("results", []):
-            props = page.get('properties', {})
-            photo_url = ""
-            
-            # ลองดึงจาก "Photo URL"
-            try: 
-                if "Photo URL" in props: photo_url = props["Photo URL"].get("url", "")
-            except: pass
-            
-            # ถ้าไม่มี ลองดึงจาก "Photo"
-            if not photo_url:
-                try:
-                    if "Photo" in props and props["Photo"]["files"]:
-                        f = props["Photo"]["files"][0]
-                        photo_url = f.get("external", {}).get("url") or f.get("file", {}).get("url")
-                except: pass
-            
-            if photo_url:
-                title = "Unknown Event"
-                try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
-                except: pass
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            for page in data.get("results", []):
+                props = page.get('properties', {})
+                photo_url = ""
                 
-                date_str = "ไม่ระบุวันที่"
-                date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-                if date_prop: 
-                    try:
-                        d_obj = date_prop.get("date")
+                # 1. ลองดึงจาก "Photo URL"
+                if "Photo URL" in props:
+                    photo_url = props["Photo URL"].get("url", "")
+                
+                if photo_url:
+                    title = "Unknown Event"
+                    if "ชื่อกิจกรรม" in props:
+                        t_list = props["ชื่อกิจกรรม"].get("title", [])
+                        if t_list: title = t_list[0]["text"]["content"]
+                    
+                    date_str = "ไม่ระบุวันที่"
+                    if "วันที่จัดกิจกรรม" in props:
+                        d_obj = props["วันที่จัดกิจกรรม"].get("date")
                         if d_obj:
-                            d_str = d_obj.get("start")
-                            if d_str:
-                                date_str = datetime.strptime(d_str, "%Y-%m-%d").strftime("%d %b %Y")
-                    except: pass
+                            d_start = d_obj.get("start")
+                            if d_start:
+                                date_str = datetime.strptime(d_start, "%Y-%m-%d").strftime("%d %b %Y")
                                 
-                gallery_items.append({
-                    "title": title, "date_str": date_str, "photo_url": photo_url
-                })
-    except: pass
+                    gallery_items.append({
+                        "title": title, "date_str": date_str, "photo_url": photo_url
+                    })
+    except Exception as e:
+        print(f"Gallery Error: {e}")
+        pass
     return gallery_items
 
+# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
-    target_start = date(2026, 1, 1)
-    target_end = date(2026, 3, 31)
+    target_start = date(2025, 1, 1) 
+    target_end = date(2026, 12, 31)
+    
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     has_more = True; next_cursor = None
+    
     while has_more:
         payload = { "page_size": 100 }
         if next_cursor: payload["start_cursor"] = next_cursor
+        
         try:
-            res = requests.post(url, json=payload, headers=headers).json()
-            for page in res.get("results", []):
+            res = requests.post(url, json=payload, headers=headers)
+            if res.status_code != 200: break
+            
+            data = res.json()
+            for page in data.get("results", []):
                 props = page.get('properties', {})
-                title = "Unknown Event"
-                try: title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
-                except: pass
+                
+                title = "กิจกรรม"
+                if "ชื่อกิจกรรม" in props:
+                    t_list = props["ชื่อกิจกรรม"].get("title", [])
+                    if t_list: title = t_list[0]["text"]["content"]
                 
                 event_type = "ทั่วไป"
                 if 'ประเภทงาน' in props:
@@ -225,28 +220,23 @@ def get_calendar_events():
                     elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
                 
                 event_date_str = None
-                date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-                if date_prop: 
-                    d_obj = date_prop.get("date")
-                    if d_obj: event_date_str = d_obj.get("start")
+                if "วันที่จัดกิจกรรม" in props:
+                    event_date_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
                 
-                event_url = ""
-                try: event_url = props.get("URL", {}).get("url", "#")
-                except: pass
+                event_url = "#"
+                if "URL" in props:
+                    event_url = props["URL"].get("url", "#")
                 
                 if event_date_str:
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
                         if target_start <= e_date <= target_end:
                             bg_color = "#FF4B4B" 
-                            display_tag = event_type
-                            if "งานย่อย" in str(event_type): 
-                                bg_color = "#708090"; display_tag = "Side Event"
-                            elif "งานใหญ่" in str(event_type): 
-                                bg_color = "#FFD700"; display_tag = "Main Event"
+                            if "งานย่อย" in str(event_type): bg_color = "#708090"
+                            elif "งานใหญ่" in str(event_type): bg_color = "#FFD700"
                             
                             events.append({
-                                "title": f"[{display_tag}] {title}", 
+                                "title": f"[{event_type}] {title}", 
                                 "start": event_date_str,
                                 "backgroundColor": bg_color, 
                                 "borderColor": bg_color, 
@@ -254,18 +244,18 @@ def get_calendar_events():
                                 "extendedProps": { "url": event_url }
                             })
                     except: pass
-            has_more = res.get("has_more", False)
-            next_cursor = res.get("next_cursor")
+            
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
         except: break
     return events
 
-# 🔥 [FIXED] ดึงกิจกรรมถัดไป (เช็คทั้ง 2 ชื่อคอลัมน์ + กรอง >= วันนี้)
+# 🔥 [UPDATED] ดึงกิจกรรมถัดไป
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     today_str = get_thai_date().strftime("%Y-%m-%d")
     
-    # ลองใช้ Filter แบบกว้างๆ ก่อน แล้วมาคัดใน Python เพื่อความชัวร์เรื่องชื่อคอลัมน์
     payload = {
         "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": today_str } },
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
@@ -273,35 +263,38 @@ def get_upcoming_event():
     }
     
     try:
-        res = requests.post(url, json=payload, headers=headers).json()
-        
-        # ถ้าหาไม่เจอ ลองหาด้วยชื่อ "วันที่จัดงาน" (Fallback)
-        if not res.get("results"):
-            payload["filter"] = { "property": "วันที่จัดงาน", "date": { "on_or_after": today_str } }
-            payload["sorts"] = [ { "property": "วันที่จัดงาน", "direction": "ascending" } ]
-            res = requests.post(url, json=payload, headers=headers).json()
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("results"):
+                page = data["results"][0]
+                props = page.get('properties', {})
+                
+                title = "กิจกรรม"
+                if "ชื่อกิจกรรม" in props:
+                    t_list = props["ชื่อกิจกรรม"].get("title", [])
+                    if t_list: title = t_list[0]["text"]["content"]
+                
+                d_str = None
+                if "วันที่จัดกิจกรรม" in props:
+                    d_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
+                
+                event_type = "ทั่วไป"
+                if 'ประเภทงาน' in props:
+                    pt = props['ประเภทงาน']
+                    if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
+                    elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
+                
+                event_url = ""
+                if "URL" in props:
+                    event_url = props["URL"].get("url", "")
 
-        if res.get("results"):
-            page = res["results"][0]
-            props = page.get('properties', {})
-            title = props.get("ชื่อกิจกรรม", {}).get("title", [])[0]["text"]["content"]
-            
-            d_str = None
-            date_prop = props.get("วันที่จัดกิจกรรม") or props.get("วันที่จัดงาน")
-            if date_prop: d_str = date_prop.get("date", {}).get("start")
-            
-            event_type = "ทั่วไป"
-            if 'ประเภทงาน' in props:
-                pt = props['ประเภทงาน']
-                if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
-                elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
-            
-            event_url = ""
-            try: event_url = props.get("URL", {}).get("url", "")
-            except: pass
-            
-            return {"title": title, "date": d_str, "type": event_type, "url": event_url}
-    except: pass
+                return {"title": title, "date": d_str, "type": event_type, "url": event_url}
+        else:
+            print(f"Error fetching event: {res.status_code}")
+    except Exception as e:
+        print(f"Exception: {e}")
+        pass
     return None
 
 @st.cache_data(ttl=300)
@@ -318,7 +311,6 @@ def get_ranking_dataframe():
             for page in res.get("results", []):
                 props = page["properties"]
                 
-                # --- ข้อมูลพื้นฐาน ---
                 name = ""
                 try: name = props.get("ชื่อ", {}).get("title", [])[0]["text"]["content"]
                 except: pass
@@ -335,13 +327,11 @@ def get_ranking_dataframe():
                 try: title = props.get("Rank Season 2", {}).get("formula", {}).get("string") or "-"
                 except: pass
 
-                # 🔥 1. ดึงอายุ (จากคอลัมน์ 'อายุ' ตรงๆ)
                 age = 99 
                 if "อายุ" in props:
                     age = extract_numeric(props["อายุ"])
                     if age == 0: age = 99 
 
-                # 🔥 2. คะแนนและอันดับ (Normal)
                 score = extract_numeric(props.get("คะแนน Rank SS2"))
                 rank_val = 9999
                 try:
@@ -352,7 +342,6 @@ def get_ranking_dataframe():
                         else: rank_val = int(r_text)
                 except: pass
 
-                # 🔥 3. คะแนนและอันดับ (Junior)
                 score_jr = extract_numeric(props.get("คะแนน Rank SS2 Junior"))
                 rank_jr_val = 9999
                 try:
@@ -815,7 +804,8 @@ elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
     st.subheader("📸 แกลเลอรีรูปภาพกิจกรรม")
     with st.spinner("กำลังโหลดรูปภาพ..."):
         gallery_items = get_photo_gallery()
-        if not gallery_items: st.info("ยังไม่มีข้อมูลรูปภาพกิจกรรม")
+        if not gallery_items: 
+            st.info("ยังไม่มีข้อมูลรูปภาพกิจกรรม")
         else:
             cols = st.columns(2)
             for i, item in enumerate(gallery_items):
