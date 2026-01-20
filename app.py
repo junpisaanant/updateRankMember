@@ -165,66 +165,62 @@ def get_latest_news(limit=5, category_filter=None):
     return news_list
 
 
+# 🔥 [FIXED] ดึงแกลเลอรีแบบ "ตัด Sort ออก" (ป้องกัน Error 400)
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    payload = { "page_size": 5, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
+    
+    # ⚠️ เอา sorts ออก เพื่อกันเหนียวเรื่องชื่อคอลัมน์ผิด
+    payload = { "page_size": 50 } 
     
     try:
         res = requests.post(url, json=payload, headers=headers)
         
-        # 🚨 DEBUG: ถ้าเชื่อมต่อไม่ได้ ให้ฟ้อง Error Code
+        # DEBUG: ถ้า Error ให้ print ออกมาดู (User จะได้เห็นถ้า token ผิด)
         if res.status_code != 200:
-            st.error(f"❌ Connect Notion ไม่ได้! Code: {res.status_code}")
-            st.write(res.text) # ดูว่า Notion ด่าว่าอะไร
+            st.error(f"Gallery Error: {res.status_code} - {res.text}")
             return []
 
-        data = res.json()
-        results = data.get("results", [])
-        
-        # 🚨 DEBUG: ถ้าเชื่อมได้ แต่ไม่เจอข้อมูลเลย
-        if not results:
-            st.warning("⚠️ เชื่อมต่อได้ แต่ไม่พบข้อมูลใน Database (อาจจะลืม Connect บอท หรือ Filter ผิด)")
-            return []
-
-        for page in results:
+        for page in res.json().get("results", []):
             props = page.get('properties', {})
             
-            # 🚨 DEBUG: แอบดูว่ามีคอลัมน์อะไรบ้าง และชื่อ Photo URL เขียนยังไง
-            # (บรรทัดนี้จะโชว์ชื่อคอลัมน์ทั้งหมดออกมาหน้าจอ ลบออกได้ภายหลัง)
-            # st.write(f"Columns Found: {list(props.keys())}") 
-
-            # 1. หา Link อัลบั้ม
+            # 1. หา Link อัลบั้ม (Photo URL)
             album_url = safe_get_text(props, "Photo URL", None)
             
-            # ถ้าไม่เจอ ลองหาแบบ File
+            # 2. ถ้าไม่มี ลองหาจาก File (Photo)
             if not album_url:
                 imgs = safe_get_image(props, "Photo")
                 if imgs: album_url = imgs[0]
             
-            # ถ้ามี Link ค่อยเอามาแสดง
+            # ถ้ามี Link/File อย่างใดอย่างหนึ่ง ค่อยเอามาแสดง
             if album_url:
                 title = safe_get_text(props, "ชื่อกิจกรรม", "Unknown Event")
+                
+                # ลองดึงวันที่จากทั้ง 2 ชื่อ (เผื่อเปลี่ยนชื่อคอลัมน์)
                 raw_date = safe_get_date(props, "วันที่จัดกิจกรรม") or safe_get_date(props, "วันที่จัดงาน")
                 
                 date_str = "ไม่ระบุวันที่"
+                dt_obj = datetime.min # ใช้สำหรับเรียงลำดับ
                 if raw_date:
-                    try: date_str = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d %b %Y")
+                    try: 
+                        dt_obj = datetime.strptime(raw_date, "%Y-%m-%d")
+                        date_str = dt_obj.strftime("%d %b %Y")
                     except: pass
                                 
                 gallery_items.append({
-                    "title": title, "date_str": date_str, "album_url": album_url
+                    "title": title, 
+                    "date_str": date_str, 
+                    "album_url": album_url,
+                    "sort_date": dt_obj
                 })
-            else:
-                # 🚨 DEBUG: แจ้งเตือนถ้ารายการนี้ไม่มีรูป
-                pass
-                # st.warning(f"Item ไม่มีรูป/ลิงก์: {safe_get_text(props, 'ชื่อกิจกรรม')}")
-
-    except Exception as e:
+    except Exception as e: 
         st.error(f"System Error: {e}")
-        
-    return gallery_items
+        return []
+    
+    # เรียงลำดับใน Python เอง (ปลอดภัยกว่า)
+    gallery_items.sort(key=lambda x: x['sort_date'], reverse=True)
+    return gallery_items[:20] # เอาแค่ 20 อันล่าสุด
 
 @st.cache_data(ttl=300)
 def get_calendar_events():
