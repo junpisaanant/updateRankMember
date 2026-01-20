@@ -165,38 +165,50 @@ def get_latest_news(limit=5, category_filter=None):
     return news_list
 
 
-# 🔥 [FIXED] ดึงแกลเลอรีแบบปลอดภัย + แจ้งเตือน Error
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-    payload = { "page_size": 20, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
+    payload = { "page_size": 5, "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] }
     
     try:
         res = requests.post(url, json=payload, headers=headers)
         
-        # 🚨 ถ้า Notion Error ให้แสดงออกมาเลย จะได้รู้
+        # 🚨 DEBUG: ถ้าเชื่อมต่อไม่ได้ ให้ฟ้อง Error Code
         if res.status_code != 200:
-            st.error(f"Gallery Error: {res.status_code} - {res.text}")
+            st.error(f"❌ Connect Notion ไม่ได้! Code: {res.status_code}")
+            st.write(res.text) # ดูว่า Notion ด่าว่าอะไร
             return []
 
         data = res.json()
-        for page in data.get("results", []):
+        results = data.get("results", [])
+        
+        # 🚨 DEBUG: ถ้าเชื่อมได้ แต่ไม่เจอข้อมูลเลย
+        if not results:
+            st.warning("⚠️ เชื่อมต่อได้ แต่ไม่พบข้อมูลใน Database (อาจจะลืม Connect บอท หรือ Filter ผิด)")
+            return []
+
+        for page in results:
             props = page.get('properties', {})
             
+            # 🚨 DEBUG: แอบดูว่ามีคอลัมน์อะไรบ้าง และชื่อ Photo URL เขียนยังไง
+            # (บรรทัดนี้จะโชว์ชื่อคอลัมน์ทั้งหมดออกมาหน้าจอ ลบออกได้ภายหลัง)
+            # st.write(f"Columns Found: {list(props.keys())}") 
+
             # 1. หา Link อัลบั้ม
             album_url = safe_get_text(props, "Photo URL", None)
-            # ถ้าไม่มี ให้ลองหาจากไฟล์แนบ (เผื่อคนใส่ผิด)
-            if not album_url or album_url == "-":
+            
+            # ถ้าไม่เจอ ลองหาแบบ File
+            if not album_url:
                 imgs = safe_get_image(props, "Photo")
                 if imgs: album_url = imgs[0]
             
-            # 2. ถ้ามี Link ค่อยเอามาแสดง
-            if album_url and album_url != "-":
+            # ถ้ามี Link ค่อยเอามาแสดง
+            if album_url:
                 title = safe_get_text(props, "ชื่อกิจกรรม", "Unknown Event")
                 raw_date = safe_get_date(props, "วันที่จัดกิจกรรม") or safe_get_date(props, "วันที่จัดงาน")
                 
-                date_str = "-"
+                date_str = "ไม่ระบุวันที่"
                 if raw_date:
                     try: date_str = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d %b %Y")
                     except: pass
@@ -204,9 +216,13 @@ def get_photo_gallery():
                 gallery_items.append({
                     "title": title, "date_str": date_str, "album_url": album_url
                 })
+            else:
+                # 🚨 DEBUG: แจ้งเตือนถ้ารายการนี้ไม่มีรูป
+                pass
+                # st.warning(f"Item ไม่มีรูป/ลิงก์: {safe_get_text(props, 'ชื่อกิจกรรม')}")
+
     except Exception as e:
         st.error(f"System Error: {e}")
-        return []
         
     return gallery_items
 
