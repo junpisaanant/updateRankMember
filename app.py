@@ -140,13 +140,12 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
-# 🔥 [UPDATED] ดึงเฉพาะลิ้งค์อัลบั้มรูป (ตัดรูปตัวอย่างออกเพื่อให้โหลดไวและชัวร์)
+# 🔥 [UPDATED] ดึงเฉพาะลิ้งค์อัลบั้มรูป
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # ดึง 50 รายการล่าสุด
     payload = { 
         "page_size": 100, 
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
@@ -159,20 +158,16 @@ def get_photo_gallery():
             for page in data.get("results", []):
                 props = page.get('properties', {})
                 
-                # 1. เช็คว่ามี Photo URL หรือไม่
                 photo_url = None
                 if "Photo URL" in props:
                     photo_url = props["Photo URL"].get("url")
                 
-                # ถ้ามี Link รูป ค่อยดึงข้อมูลอื่นต่อ
                 if photo_url:
-                    # ดึงชื่อ
                     title = "กิจกรรม (ไม่ระบุชื่อ)"
                     if "ชื่อกิจกรรม" in props:
                         t_list = props["ชื่อกิจกรรม"].get("title", [])
                         if t_list: title = t_list[0]["text"]["content"]
                     
-                    # ดึงวันที่
                     date_str = ""
                     if "วันที่จัดกิจกรรม" in props:
                         d_obj = props["วันที่จัดกิจกรรม"].get("date")
@@ -194,7 +189,7 @@ def get_photo_gallery():
         
     return gallery_items
 
-# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน
+# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -235,6 +230,13 @@ def get_calendar_events():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "#")
                 
+                # ✅ 1. ดึงรายละเอียดเพิ่มเติม
+                details_text = "-"
+                try:
+                    d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
+                    details_text = "".join([t["text"]["content"] for t in d_list])
+                except: pass
+
                 if event_date_str:
                     try:
                         e_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
@@ -249,7 +251,8 @@ def get_calendar_events():
                                 "backgroundColor": bg_color, 
                                 "borderColor": bg_color, 
                                 "allDay": True,
-                                "extendedProps": { "url": event_url }
+                                # ✅ เก็บรายละเอียดไว้ใน extendedProps เพื่อส่งไปที่ปฏิทิน
+                                "extendedProps": { "url": event_url, "details": details_text }
                             })
                     except: pass
             
@@ -258,7 +261,7 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [UPDATED] ดึงกิจกรรมถัดไป
+# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
@@ -297,7 +300,20 @@ def get_upcoming_event():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "")
 
-                return {"title": title, "date": d_str, "type": event_type, "url": event_url}
+                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
+                details_text = "-"
+                try:
+                    d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
+                    details_text = "".join([t["text"]["content"] for t in d_list])
+                except: pass
+
+                return {
+                    "title": title, 
+                    "date": d_str, 
+                    "type": event_type, 
+                    "url": event_url, 
+                    "details": details_text # ส่งค่ากลับไปด้วย
+                }
         else:
             print(f"Error fetching event: {res.status_code}")
     except Exception as e:
@@ -489,11 +505,21 @@ def show_news_popup(item):
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
 
+# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม (เพิ่มส่วนแสดงเนื้อหา details)
 @st.dialog("รายละเอียดกิจกรรม")
-def show_event_popup(title, url):
-    st.write(f"คุณต้องการเปิดหน้าเว็บของงาน **{title}** หรือไม่?")
-    st.write("") 
-    st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
+def show_event_popup(title, details, url):
+    st.write(f"### {title}")
+    
+    # ส่วนแสดงเนื้อหารายละเอียด
+    st.write("---")
+    if details and details != "-":
+        st.info(details)
+    else:
+        st.caption("ไม่มีรายละเอียดเพิ่มเติม")
+    st.write("---")
+
+    if url and url != "#":
+        st.link_button("🚀 ไปที่หน้าลงทะเบียน", url, type="primary", use_container_width=True)
 
 # ================= UI START =================
 st.title("🏆LSX Ranking")
@@ -629,7 +655,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
+                    # ✅ เพิ่มปุ่มรายละเอียดเพิ่มเติม
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
+                            show_event_popup(next_event['title'], next_event['details'], next_event['url'])
+                    with c2:
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าลงทะเบียน", next_event['url'], use_container_width=True)
             else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
@@ -798,11 +830,11 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
                 st.session_state['last_clicked_event'] = current_click_data
                 clicked_title = current_click_data["title"]
                 clicked_url = current_click_data.get("extendedProps", {}).get("url")
-                if clicked_url and clicked_url != "#": 
-                    # ✅ เรียกใช้ Dialog ที่ประกาศไว้ข้างบน (Global)
-                    show_event_popup(clicked_title, clicked_url)
-                else: 
-                    st.toast(f"ℹ️ กิจกรรม {clicked_title} ไม่มีลิงก์ URL")
+                # ✅ รับ details จาก extendedProps
+                clicked_details = current_click_data.get("extendedProps", {}).get("details", "-")
+                
+                # ✅ เรียก Dialog แบบเดียวกับหน้า Dashboard
+                show_event_popup(clicked_title, clicked_details, clicked_url)
                     
     except Exception as e:
         st.error(f"❌ Error: {e}")
