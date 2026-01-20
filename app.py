@@ -1,8 +1,10 @@
 import streamlit as st
 import requests
+import time
 import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
+# import extra_streamlit_components as stx # ปิดชั่วคราว
 from streamlit_calendar import calendar
 import pytz 
 
@@ -14,22 +16,11 @@ THAI_TZ = pytz.timezone('Asia/Bangkok')
 def get_thai_date():
     return datetime.now(THAI_TZ).date()
 
-# --- 🔍 DEBUG SECTION (ส่วนตรวจสอบการเชื่อมต่อ) ---
-# ส่วนนี้จะช่วยบอกว่า Cloud มองเห็น Token หรือไม่
-if "NOTION_TOKEN" in st.secrets:
-    NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-    st.sidebar.success("✅ Secrets Loaded (Cloud)")
-else:
-    # กรณี Local หรือหาไม่เจอ
-    try:
-        NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-    except:
-        NOTION_TOKEN = "MISSING_TOKEN"
-        st.sidebar.error("❌ ไม่พบ Token! กรุณาตั้งค่าใน Streamlit Secrets")
-
 try:
+    NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
     IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY", "") 
-except:
+except FileNotFoundError:
+    NOTION_TOKEN = "CHECK_SECRETS"
     IMGBB_API_KEY = ""
 
 MEMBER_DB_ID = "271e6d24b97d80289175eef889a90a09" 
@@ -81,7 +72,6 @@ def get_province_options():
     except: pass
     return []
 
-# 🔥 [UPDATED] ดึงข่าว (Show Error if Failed)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
@@ -93,65 +83,61 @@ def get_latest_news(limit=5, category_filter=None):
         payload["filter"] = {"property": "ประเภท", "select": {"equals": category_filter}}
 
     news_list = []
-    
-    # ❌ เอา try...except ออก เพื่อให้เห็น Error ถ้า Cloud เชื่อมต่อไม่ได้
-    res = requests.post(url, json=payload, headers=headers)
-    
-    if res.status_code == 200:
-        data = res.json()
-        for page in data.get("results", []):
-            props = page.get("properties", {})
-            
-            topic = "ไม่มีหัวข้อ"
-            try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
-            except: pass
-            
-            category = "ข่าวสาร"
-            try:
-                cat_prop = props.get("ประเภท")
-                if cat_prop['type'] == 'select' and cat_prop['select']:
-                    category = cat_prop['select']['name']
-                elif cat_prop['type'] == 'multi_select' and cat_prop['multi_select']:
-                    category = cat_prop['multi_select'][0]['name']
-            except: pass
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            for page in data.get("results", []):
+                props = page.get("properties", {})
+                
+                topic = "ไม่มีหัวข้อ"
+                try: topic = props.get("หัวข้อ", {}).get("title", [])[0]["text"]["content"]
+                except: pass
+                
+                category = "ข่าวสาร"
+                try:
+                    cat_prop = props.get("ประเภท")
+                    if cat_prop['type'] == 'select' and cat_prop['select']:
+                        category = cat_prop['select']['name']
+                    elif cat_prop['type'] == 'multi_select' and cat_prop['multi_select']:
+                        category = cat_prop['multi_select'][0]['name']
+                except: pass
 
-            if category_filter and category_filter != category: continue
+                if category_filter and category_filter != category: continue
 
-            content = "-"
-            try: 
-                content_list = props.get("เนื้อหา", {}).get("rich_text", [])
-                content = "".join([t["text"]["content"] for t in content_list])
-            except: pass
-            
-            link = None
-            try: link = props.get("URL", {}).get("url")
-            except: pass
-            
-            show_date = "ไม่ระบุวันที่"
-            try: 
-                d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
-                if d_str:
-                    d_obj = datetime.strptime(d_str, "%Y-%m-%d")
-                    show_date = d_obj.strftime("%d/%m/%Y")
-            except: pass
+                content = "-"
+                try: 
+                    content_list = props.get("เนื้อหา", {}).get("rich_text", [])
+                    content = "".join([t["text"]["content"] for t in content_list])
+                except: pass
+                
+                link = None
+                try: link = props.get("URL", {}).get("url")
+                except: pass
+                
+                show_date = "ไม่ระบุวันที่"
+                try: 
+                    d_str = props.get("วันที่ประกาศ", {}).get("date", {}).get("start")
+                    if d_str:
+                        d_obj = datetime.strptime(d_str, "%Y-%m-%d")
+                        show_date = d_obj.strftime("%d/%m/%Y")
+                except: pass
 
-            image_urls = []
-            try:
-                img_files = props.get("ภาพประกอบ", {}).get("files", [])
-                for file in img_files:
-                    url = ""
-                    if file['type'] == 'external': url = file['external']['url']
-                    elif file['type'] == 'file': url = file['file']['url']
-                    if url: image_urls.append(url)
-            except: pass
-            
-            news_list.append({ 
-                "id": page["id"], "topic": topic, "content": content, 
-                "url": link, "date": show_date, "category": category, "image_urls": image_urls
-            })
-    else:
-        st.error(f"News API Error: {res.status_code} - {res.text}") # แสดง Error บนหน้าจอ
-        
+                image_urls = []
+                try:
+                    img_files = props.get("ภาพประกอบ", {}).get("files", [])
+                    for file in img_files:
+                        url = ""
+                        if file['type'] == 'external': url = file['external']['url']
+                        elif file['type'] == 'file': url = file['file']['url']
+                        if url: image_urls.append(url)
+                except: pass
+                
+                news_list.append({ 
+                    "id": page["id"], "topic": topic, "content": content, 
+                    "url": link, "date": show_date, "category": category, "image_urls": image_urls
+                })
+    except: pass
     return news_list
 
 @st.cache_data(ttl=300)
@@ -164,40 +150,45 @@ def get_photo_gallery():
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
     }
     
-    res = requests.post(url, json=payload, headers=headers)
-    if res.status_code == 200:
-        data = res.json()
-        for page in data.get("results", []):
-            props = page.get('properties', {})
-            
-            photo_url = None
-            if "Photo URL" in props:
-                photo_url = props["Photo URL"].get("url")
-            
-            if photo_url:
-                title = "กิจกรรม (ไม่ระบุชื่อ)"
-                if "ชื่อกิจกรรม" in props:
-                    t_list = props["ชื่อกิจกรรม"].get("title", [])
-                    if t_list: title = t_list[0]["text"]["content"]
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            for page in data.get("results", []):
+                props = page.get('properties', {})
                 
-                date_str = ""
-                if "วันที่จัดกิจกรรม" in props:
-                    d_obj = props["วันที่จัดกิจกรรม"].get("date")
-                    if d_obj:
-                        d_start = d_obj.get("start")
-                        if d_start:
-                            try:
-                                date_obj = datetime.strptime(d_start, "%Y-%m-%d")
-                                date_str = date_obj.strftime("%d/%m/%Y")
-                            except: date_str = d_start
-                            
-                gallery_items.append({
-                    "title": title, 
-                    "date_str": date_str, 
-                    "photo_url": photo_url
-                })
+                photo_url = None
+                if "Photo URL" in props:
+                    photo_url = props["Photo URL"].get("url")
+                
+                if photo_url:
+                    title = "กิจกรรม (ไม่ระบุชื่อ)"
+                    if "ชื่อกิจกรรม" in props:
+                        t_list = props["ชื่อกิจกรรม"].get("title", [])
+                        if t_list: title = t_list[0]["text"]["content"]
+                    
+                    date_str = ""
+                    if "วันที่จัดกิจกรรม" in props:
+                        d_obj = props["วันที่จัดกิจกรรม"].get("date")
+                        if d_obj:
+                            d_start = d_obj.get("start")
+                            if d_start:
+                                try:
+                                    date_obj = datetime.strptime(d_start, "%Y-%m-%d")
+                                    date_str = date_obj.strftime("%d/%m/%Y")
+                                except: date_str = d_start
+                                
+                    gallery_items.append({
+                        "title": title, 
+                        "date_str": date_str, 
+                        "photo_url": photo_url
+                    })
+    except Exception as e:
+        pass
+        
     return gallery_items
 
+# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -238,6 +229,7 @@ def get_calendar_events():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "#")
                 
+                # ✅ 1. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -267,78 +259,70 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (เปิดเผย Error ถ้ามี)
+# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (แก้ไขให้ยืดหยุ่นเรื่องวันที่)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # ดึงทั้งหมดมาเรียงวันที่ (Descending) แล้วเอาตัวแรกสุด (ล่าสุด)
-    # ตัด Filter วันที่ออก เพื่อเลี่ยงปัญหา Timezone
+    # 💡 ใช้ Buffer ย้อนหลัง 7 วัน เพื่อแก้ปัญหา Timezone บน Cloud
+    # ถ้า event มีวันนี้ แต่วันนี้บน Cloud ยังไม่ถึง (หรือเลยไปแล้วนิดหน่อย) ก็จะยังดึงมาได้
+    buffer_date = (get_thai_date() - timedelta(days=7)).strftime("%Y-%m-%d")
+    
     payload = {
-        "page_size": 20, # ดึงมา 20 ตัวเผื่อเลือก
-        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ]
+        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": buffer_date } },
+        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
+        "page_size": 20 # ดึงมาเผื่อเลือก
     }
     
-    # ❌ เอา try/except ออก เพื่อให้ Error หลุดออกมาถ้าเชื่อมต่อไม่ได้
-    res = requests.post(url, json=payload, headers=headers)
-    
-    if res.status_code == 200:
-        data = res.json()
-        results = data.get("results", [])
-        
-        if not results:
-            return None # เชื่อมต่อได้ แต่ไม่มีข้อมูล
-            
-        # เลือกตัวแรกสุด (ที่เป็นงานล่าสุด)
-        # หรือถ้าต้องการ Logic "งานที่ยังไม่ปิด" ให้ uncomment loop ข้างล่าง
-        
-        target_page = results[0] # เอาตัวล่าสุดเลย
-        
-        # --- Logic Loop หางานที่ยังไม่ปิด (Optional) ---
-        # for p in results:
-        #     stat = p['properties'].get("Status", {}).get("status", {}).get("name", "")
-        #     if "ปิด" not in stat:
-        #         target_page = p
-        #         break
-        # ---------------------------------------------
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("results"):
+                # วนลูปหาอันแรกที่ยังไม่ผ่านไปนานเกินไป หรือยังไม่ปิดรับสมัคร
+                # (Logic: เลือกอันแรกสุดที่ API ส่งมา เพราะเรียงตามวันที่แล้ว)
+                page = data["results"][0]
+                props = page.get('properties', {})
+                
+                title = "กิจกรรม"
+                if "ชื่อกิจกรรม" in props:
+                    t_list = props["ชื่อกิจกรรม"].get("title", [])
+                    if t_list: title = t_list[0]["text"]["content"]
+                
+                d_str = None
+                if "วันที่จัดกิจกรรม" in props:
+                    d_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
+                
+                event_type = "ทั่วไป"
+                if 'ประเภทงาน' in props:
+                    pt = props['ประเภทงาน']
+                    if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
+                    elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
+                
+                event_url = ""
+                if "URL" in props:
+                    event_url = props["URL"].get("url", "")
 
-        props = target_page.get('properties', {})
-        
-        title = "กิจกรรม"
-        if "ชื่อกิจกรรม" in props:
-            t_list = props["ชื่อกิจกรรม"].get("title", [])
-            if t_list: title = t_list[0]["text"]["content"]
-        
-        d_str = None
-        if "วันที่จัดกิจกรรม" in props:
-            d_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
-        
-        event_type = "ทั่วไป"
-        if 'ประเภทงาน' in props:
-            pt = props['ประเภทงาน']
-            if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
-            elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
-        
-        event_url = ""
-        if "URL" in props:
-            event_url = props["URL"].get("url", "")
+                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
+                details_text = "-"
+                try:
+                    d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
+                    details_text = "".join([t["text"]["content"] for t in d_list])
+                except: pass
 
-        details_text = "-"
-        try:
-            d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
-            details_text = "".join([t["text"]["content"] for t in d_list])
-        except: pass
-
-        return {
-            "title": title, 
-            "date": d_str, 
-            "type": event_type, 
-            "url": event_url, 
-            "details": details_text 
-        }
-    else:
-        st.error(f"Event API Error: {res.status_code} - {res.text}")
-        return None
+                return {
+                    "title": title, 
+                    "date": d_str, 
+                    "type": event_type, 
+                    "url": event_url, 
+                    "details": details_text
+                }
+        else:
+            print(f"Error fetching event: {res.status_code}")
+    except Exception as e:
+        print(f"Exception: {e}")
+        pass
+    return None
 
 @st.cache_data(ttl=300)
 def get_ranking_dataframe():
@@ -552,6 +536,16 @@ if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_
 if 'cookie_checked' not in st.session_state:
     st.session_state['cookie_checked'] = False
 
+# ส่วนเช็ค Cookie เดิม (ปิดไว้ก่อน)
+# if not st.session_state['cookie_checked']:
+#     time.sleep(0.5) 
+#     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
+#     if cookie_user_id:
+#         user_data = get_user_by_id(cookie_user_id)
+#         if user_data:
+#             st.session_state['user_page'] = user_data
+#     st.session_state['cookie_checked'] = True
+
 # ================= SIDEBAR =================
 with st.sidebar:
     st.header("📌 เมนูหลัก")
@@ -602,8 +596,10 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
                 if not df_dash.empty:
+                    # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
+                    
                     st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
                         column_config={ 
                             "photo": st.column_config.ImageColumn("รูป", width="small"), 
@@ -619,61 +615,58 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
                 if not df_dash.empty:
+                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ age)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
+                    
                     if not df_jr.empty:
+                        # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย), ชื่อ (ก->ฮ)
                         df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                         df_top10_jr = df_jr.head(10)
+                        
                         st.dataframe(df_top10_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                             column_config={ 
                                 "photo": st.column_config.ImageColumn("รูป", width="small"), 
                                 "อันดับ Junior": st.column_config.NumberColumn("อันดับ Jr.", format="%d"), 
-                                "name": st.column_config.TextColumn("ชื่อสมาชิก"), 
+                                "name": st.column_config.TextColumn("Player"), 
                                 "score_jr": st.column_config.NumberColumn("Score Jr.", format="%d 🍼"),
                                 "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
                             },
                             hide_index=True, use_container_width=True, height=450)
-                    else: st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
+                    else:
+                        st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
                 else: st.info("กำลังประมวลผลอันดับ...")
 
     with col_d2:
         # --- กิจกรรมถัดไป ---
         st.subheader("📅 กิจกรรมถัดไป")
-        
-        # 🔥 [DEBUG] แสดงสถานะ Token ชัดๆ บนหน้าจอ
-        if NOTION_TOKEN == "MISSING_TOKEN":
-            st.error("❌ ERROR: ไม่พบ Notion Token ใน Secrets! กรุณาตั้งค่าใน Dashboard")
-        else:
-            with st.spinner("กำลังโหลดกิจกรรมถัดไป..."):
-                next_event = get_upcoming_event()
-                
-                if next_event:
-                    with st.container(border=True):
-                        if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
-                        else: st.markdown(f"### {next_event['title']}")
-                        
-                        try:
-                            d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
-                            d_nice = d_obj.strftime("%d %b %Y")
-                            today = get_thai_date()
-                            days_left = (d_obj - today).days
-                        except: d_nice = next_event['date']; days_left = 99
-                        
-                        st.write(f"🗓️ **วันที่:** {d_nice}")
-                        st.write(f"🏷️ **ประเภท:** {next_event['type']}")
-                        
-                        if days_left == 0: st.error("🔥 วันนี้!")
-                        elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
-                        
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
-                                show_event_popup(next_event['title'], next_event['details'], next_event['url'])
-                        with c2:
-                            if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
-                else: 
-                    st.info("ไม่มีกิจกรรมเร็วๆ นี้")
-                    # Debug: ถ้าไม่เจอ ให้บอกเหตุผล
-                    st.caption("หมายเหตุ: ระบบค้นหา 20 กิจกรรมล่าสุดแล้ว ไม่พบกิจกรรมที่เปิดอยู่")
+        with st.spinner("กำลังโหลดกิจกรรมถัดไป..."):
+            next_event = get_upcoming_event()
+            if next_event:
+                with st.container(border=True):
+                    if next_event['url']: st.markdown(f"### [{next_event['title']}]({next_event['url']})")
+                    else: st.markdown(f"### {next_event['title']}")
+                    
+                    try:
+                        d_obj = datetime.strptime(next_event['date'], "%Y-%m-%d").date()
+                        d_nice = d_obj.strftime("%d %b %Y")
+                        today = get_thai_date()
+                        days_left = (d_obj - today).days
+                    except: d_nice = next_event['date']; days_left = 99
+                    
+                    st.write(f"🗓️ **วันที่:** {d_nice}")
+                    st.write(f"🏷️ **ประเภท:** {next_event['type']}")
+                    
+                    if days_left == 0: st.error("🔥 วันนี้!")
+                    elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
+                    
+                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
+                            show_event_popup(next_event['title'], next_event['details'], next_event['url'])
+                    with c2:
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
+            else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
         st.write("") 
@@ -702,7 +695,7 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     elif "กฎ" in item['category']: cat_color = "#2E86C1"
                     st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
                     
-                    short_content = (item['content'][:150] + '...') if len(item['content']) > 200 else item['content']
+                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
                     st.write(short_content)
                     st.caption(f"🗓️ {item['date']}")
                     
@@ -728,7 +721,9 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 1: Normal Rank ---
         with tab_lb_main:
             st.subheader("🏆 ตารางอันดับรวม")
+            # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
             df_main = df_leaderboard.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
+            
             st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
                 column_config={ 
                     "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -743,9 +738,14 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 2: Junior Rank ---
         with tab_lb_jr:
             st.subheader("👶 ตารางอันดับ Junior")
+            
+            # ✅ กรองเฉพาะอายุ <= 13 ปี
             df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
+            
             if not df_jr.empty:
+                # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                 df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
+                
                 st.dataframe(df_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                     column_config={ 
                         "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -755,7 +755,8 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
                         "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
                     },
                     hide_index=True, use_container_width=True, height=600)
-            else: st.info("ยังไม่มีข้อมูลผู้เล่นรุ่น Junior (อายุไม่เกิน 13 ปี)")
+            else:
+                st.info("ยังไม่มีข้อมูลผู้เล่นรุ่น Junior (อายุไม่เกิน 13 ปี)")
 
     else: st.warning("ไม่พบข้อมูลสมาชิก")
 
