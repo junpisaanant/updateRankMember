@@ -140,13 +140,15 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
+# 🔥 [ORIGINAL] ไม่แตะต้องตามคำสั่ง
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
+    # ดึงเฉพาะรายการที่มีรูปปก หรือ มี Photo URL
     payload = { 
-        "page_size": 100, 
+        "page_size": 20, 
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
     }
     
@@ -156,18 +158,25 @@ def get_photo_gallery():
             data = res.json()
             for page in data.get("results", []):
                 props = page.get('properties', {})
+                photo_url = ""
                 
-                photo_url = None
+                # 1. ลองดึงจาก "Photo URL"
                 if "Photo URL" in props:
-                    photo_url = props["Photo URL"].get("url")
+                    photo_url = props["Photo URL"].get("url", "")
+                
+                # 2. ถ้าไม่มี URL ให้ลองดึงจาก "Page Cover" (คืนค่าส่วนนี้ให้แล้วครับ)
+                if not photo_url and page.get("cover"):
+                    cover = page["cover"]
+                    if cover['type'] == 'external': photo_url = cover['external']['url']
+                    elif cover['type'] == 'file': photo_url = cover['file']['url']
                 
                 if photo_url:
-                    title = "กิจกรรม (ไม่ระบุชื่อ)"
+                    title = "Unknown Event"
                     if "ชื่อกิจกรรม" in props:
                         t_list = props["ชื่อกิจกรรม"].get("title", [])
                         if t_list: title = t_list[0]["text"]["content"]
                     
-                    date_str = ""
+                    date_str = "ไม่ระบุวันที่"
                     if "วันที่จัดกิจกรรม" in props:
                         d_obj = props["วันที่จัดกิจกรรม"].get("date")
                         if d_obj:
@@ -184,11 +193,11 @@ def get_photo_gallery():
                         "photo_url": photo_url
                     })
     except Exception as e:
+        print(f"Gallery Error: {e}")
         pass
-        
     return gallery_items
 
-# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
+# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่ม details)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -229,7 +238,7 @@ def get_calendar_events():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "#")
                 
-                # ✅ 1. ดึงรายละเอียดเพิ่มเติม
+                # ✅ ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -259,19 +268,16 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (แก้ไขให้ยืดหยุ่นเรื่องวันที่)
+# 🔥 [UPDATED] กิจกรรมถัดไป (เอาวันที่น้อยสุดที่ยังไม่ปิดรับสมัคร + เพิ่ม details)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # 💡 ใช้ Buffer ย้อนหลัง 7 วัน เพื่อแก้ปัญหา Timezone บน Cloud
-    # ถ้า event มีวันนี้ แต่วันนี้บน Cloud ยังไม่ถึง (หรือเลยไปแล้วนิดหน่อย) ก็จะยังดึงมาได้
-    buffer_date = (get_thai_date() - timedelta(days=7)).strftime("%Y-%m-%d")
-    
+    # ❌ ไม่กรองวันที่ (ตัดปัญหา Cloud Timezone)
+    # ✅ เรียงจากวันที่น้อย -> มาก
     payload = {
-        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": buffer_date } },
-        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
-        "page_size": 20 # ดึงมาเผื่อเลือก
+        "page_size": 50, # ดึงมาเผื่อ
+        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ]
     }
     
     try:
@@ -279,44 +285,51 @@ def get_upcoming_event():
         if res.status_code == 200:
             data = res.json()
             if data.get("results"):
-                # วนลูปหาอันแรกที่ยังไม่ผ่านไปนานเกินไป หรือยังไม่ปิดรับสมัคร
-                # (Logic: เลือกอันแรกสุดที่ API ส่งมา เพราะเรียงตามวันที่แล้ว)
-                page = data["results"][0]
-                props = page.get('properties', {})
-                
-                title = "กิจกรรม"
-                if "ชื่อกิจกรรม" in props:
-                    t_list = props["ชื่อกิจกรรม"].get("title", [])
-                    if t_list: title = t_list[0]["text"]["content"]
-                
-                d_str = None
-                if "วันที่จัดกิจกรรม" in props:
-                    d_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
-                
-                event_type = "ทั่วไป"
-                if 'ประเภทงาน' in props:
-                    pt = props['ประเภทงาน']
-                    if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
-                    elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
-                
-                event_url = ""
-                if "URL" in props:
-                    event_url = props["URL"].get("url", "")
+                for page in data["results"]:
+                    props = page.get('properties', {})
+                    
+                    # เช็คสถานะ (ถ้าเจอคำว่า "ปิด" หรือ "จบ" ให้ข้าม)
+                    status_name = ""
+                    try: status_name = props.get("Status", {}).get("status", {}).get("name", "")
+                    except: pass
+                    
+                    if "ปิด" in status_name or "Close" in status_name or "จบ" in status_name:
+                        continue
+                    
+                    # ถ้าผ่านเงื่อนไข (คือยังไม่ปิด) เอาตัวนี้แหละ
+                    title = "กิจกรรม"
+                    if "ชื่อกิจกรรม" in props:
+                        t_list = props["ชื่อกิจกรรม"].get("title", [])
+                        if t_list: title = t_list[0]["text"]["content"]
+                    
+                    d_str = None
+                    if "วันที่จัดกิจกรรม" in props:
+                        d_str = props["วันที่จัดกิจกรรม"].get("date", {}).get("start")
+                    
+                    event_type = "ทั่วไป"
+                    if 'ประเภทงาน' in props:
+                        pt = props['ประเภทงาน']
+                        if pt['type'] == 'select' and pt['select']: event_type = pt['select']['name']
+                        elif pt['type'] == 'multi_select' and pt['multi_select']: event_type = pt['multi_select'][0]['name']
+                    
+                    event_url = ""
+                    if "URL" in props:
+                        event_url = props["URL"].get("url", "")
+                    
+                    # ✅ ดึงรายละเอียดเพิ่มเติม
+                    details_text = "-"
+                    try:
+                        d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
+                        details_text = "".join([t["text"]["content"] for t in d_list])
+                    except: pass
 
-                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
-                details_text = "-"
-                try:
-                    d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
-                    details_text = "".join([t["text"]["content"] for t in d_list])
-                except: pass
-
-                return {
-                    "title": title, 
-                    "date": d_str, 
-                    "type": event_type, 
-                    "url": event_url, 
-                    "details": details_text
-                }
+                    return {
+                        "title": title, 
+                        "date": d_str, 
+                        "type": event_type, 
+                        "url": event_url,
+                        "details": details_text 
+                    }
         else:
             print(f"Error fetching event: {res.status_code}")
     except Exception as e:
@@ -508,24 +521,24 @@ def show_news_popup(item):
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
 
-# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม
+# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม (แสดง details)
 @st.dialog("รายละเอียดกิจกรรม")
 def show_event_popup(title, details, url):
     st.write(f"### {title}")
+    
     st.write("---")
     if details and details != "-":
         st.info(details)
     else:
         st.caption("ไม่มีรายละเอียดเพิ่มเติม")
     st.write("---")
+
     if url and url != "#":
         st.link_button("🚀 ไปที่หน้าลงทะเบียน", url, type="primary", use_container_width=True)
 
 # ================= UI START =================
 st.title("🏆LSX Ranking")
 
-# ❌ ปิดการใช้งาน Cookie Manager ชั่วคราวเพื่อแก้ปัญหาหน้าจอขาวบน Cloud
-# cookie_manager = stx.CookieManager(key="lsx_cookie_manager")
 cookie_manager = None
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
@@ -535,16 +548,6 @@ if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_
 
 if 'cookie_checked' not in st.session_state:
     st.session_state['cookie_checked'] = False
-
-# ส่วนเช็ค Cookie เดิม (ปิดไว้ก่อน)
-# if not st.session_state['cookie_checked']:
-#     time.sleep(0.5) 
-#     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
-#     if cookie_user_id:
-#         user_data = get_user_by_id(cookie_user_id)
-#         if user_data:
-#             st.session_state['user_page'] = user_data
-#     st.session_state['cookie_checked'] = True
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -596,7 +599,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
                 if not df_dash.empty:
-                    # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
                     
@@ -615,11 +617,9 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
                 if not df_dash.empty:
-                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ age)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
                     
                     if not df_jr.empty:
-                        # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย), ชื่อ (ก->ฮ)
                         df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                         df_top10_jr = df_jr.head(10)
                         
@@ -659,13 +659,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
+                    # ✅ ปุ่มรายละเอียด
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
                             show_event_popup(next_event['title'], next_event['details'], next_event['url'])
                     with c2:
-                        if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าลงทะเบียน", next_event['url'], use_container_width=True)
             else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
@@ -721,9 +721,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 1: Normal Rank ---
         with tab_lb_main:
             st.subheader("🏆 ตารางอันดับรวม")
-            # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
             df_main = df_leaderboard.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
-            
             st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
                 column_config={ 
                     "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -738,14 +736,9 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 2: Junior Rank ---
         with tab_lb_jr:
             st.subheader("👶 ตารางอันดับ Junior")
-            
-            # ✅ กรองเฉพาะอายุ <= 13 ปี
             df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
-            
             if not df_jr.empty:
-                # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                 df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
-                
                 st.dataframe(df_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                     column_config={ 
                         "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -768,13 +761,11 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
         if all_news:
             for item in all_news:
                 with st.container(border=True):
-                    c_head, c_cat = st.columns([3, 1])
-                    with c_head: st.markdown(f"### {item['topic']}")
-                    with c_cat:
-                        cat_color = "#808080"
-                        if "ประกาศ" in item['category']: cat_color = "#FF4B4B"
-                        elif "กฎ" in item['category']: cat_color = "#2E86C1"
-                        st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
+                    st.markdown(f"**{item['topic']}**")
+                    cat_color = "gray"
+                    if "ประกาศ" in item['category']: cat_color = "red"
+                    elif "กฎ" in item['category']: cat_color = "#2E86C1"
+                    st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
                     
                     st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
                     st.markdown("---")
@@ -784,7 +775,6 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     
                     if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"news_full_{item['id']}"):
                         show_news_popup(item)
-
         else: st.info("ยังไม่มีประกาศ")
 
 # 📜 PAGE: RULES (NEW)
@@ -855,7 +845,6 @@ elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
             st.warning("📭 ไม่พบรายการที่มี Photo URL ใน Database")
             st.write("คำแนะนำ: กรุณาตรวจสอบว่าใส่ลิ้งค์ในช่อง 'Photo URL' ใน Notion แล้วหรือยัง")
         else:
-            # แสดงผลแบบรายการ (List View) ดูง่ายๆ
             for item in gallery_items:
                 with st.container(border=True):
                     col1, col2 = st.columns([3, 1])
@@ -886,7 +875,7 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
                 user_data = check_login(username, password)
                 if user_data:
                     st.session_state['user_page'] = user_data
-                    if remember_me: pass # cookie_manager.set(...) # ปิดการใช้ Cookie ชั่วคราว
+                    if remember_me: pass # cookie_manager.set(...) 
                     st.rerun()
                 else: st.error("Login failed: Username หรือ Password ไม่ถูกต้อง")
             st.markdown("---")
