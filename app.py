@@ -4,7 +4,7 @@ import time
 import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
-# import extra_streamlit_components as stx # ปิดชั่วคราว
+# import extra_streamlit_components as stx # ปิดตัวนี้ชั่วคราวแก้หน้าขาว
 from streamlit_calendar import calendar
 import pytz 
 
@@ -72,13 +72,18 @@ def get_province_options():
     except: pass
     return []
 
+# 🔥 [UPDATED] ดึงข่าวล่าสุด (เอา Filter วันที่ออก เพื่อให้แสดงแน่นอน)
 @st.cache_data(ttl=300)
 def get_latest_news(limit=5, category_filter=None):
     url = f"https://api.notion.com/v1/databases/{NEWS_DB_ID}/query"
+    
+    # ดึงล่าสุดมาเลย ไม่กรองวันที่
     payload = {
         "page_size": limit, 
         "sorts": [ { "property": "วันที่ประกาศ", "direction": "descending" } ]
     }
+    
+    # กรองแค่ประเภท ถ้ามี
     if category_filter:
         payload["filter"] = {"property": "ประเภท", "select": {"equals": category_filter}}
 
@@ -188,7 +193,6 @@ def get_photo_gallery():
         
     return gallery_items
 
-# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -259,19 +263,18 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (แก้ไขให้ยืดหยุ่นเรื่องวันที่)
+# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (แก้ Logic: เอาทั้งหมด แล้วเลือกตัวล่าสุด ไม่สนวันที่)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # 💡 ใช้ Buffer ย้อนหลัง 7 วัน เพื่อแก้ปัญหา Timezone บน Cloud
-    # ถ้า event มีวันนี้ แต่วันนี้บน Cloud ยังไม่ถึง (หรือเลยไปแล้วนิดหน่อย) ก็จะยังดึงมาได้
-    buffer_date = (get_thai_date() - timedelta(days=7)).strftime("%Y-%m-%d")
+    # ❌ ไม่กรองวันที่แล้ว (ป้องกัน Timezone บน Cloud เพี้ยน)
+    # ✅ ดึงข้อมูลล่าสุดโดยเรียงลำดับวันที่ (Descending) แล้วเอาตัวแรกสุด
+    # หมายความว่า จะแสดงกิจกรรมล่าสุดที่มีในระบบเสมอ (แม้จะผ่านไปแล้ว)
     
     payload = {
-        "filter": { "property": "วันที่จัดกิจกรรม", "date": { "on_or_after": buffer_date } },
-        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "ascending" } ],
-        "page_size": 20 # ดึงมาเผื่อเลือก
+        "page_size": 1,
+        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ]
     }
     
     try:
@@ -279,8 +282,6 @@ def get_upcoming_event():
         if res.status_code == 200:
             data = res.json()
             if data.get("results"):
-                # วนลูปหาอันแรกที่ยังไม่ผ่านไปนานเกินไป หรือยังไม่ปิดรับสมัคร
-                # (Logic: เลือกอันแรกสุดที่ API ส่งมา เพราะเรียงตามวันที่แล้ว)
                 page = data["results"][0]
                 props = page.get('properties', {})
                 
@@ -303,7 +304,6 @@ def get_upcoming_event():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "")
 
-                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -315,7 +315,7 @@ def get_upcoming_event():
                     "date": d_str, 
                     "type": event_type, 
                     "url": event_url, 
-                    "details": details_text
+                    "details": details_text 
                 }
         else:
             print(f"Error fetching event: {res.status_code}")
@@ -508,7 +508,7 @@ def show_news_popup(item):
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
 
-# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม
+# ✅ Dialog รายละเอียดกิจกรรม
 @st.dialog("รายละเอียดกิจกรรม")
 def show_event_popup(title, details, url):
     st.write(f"### {title}")
@@ -535,16 +535,6 @@ if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_
 
 if 'cookie_checked' not in st.session_state:
     st.session_state['cookie_checked'] = False
-
-# ส่วนเช็ค Cookie เดิม (ปิดไว้ก่อน)
-# if not st.session_state['cookie_checked']:
-#     time.sleep(0.5) 
-#     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
-#     if cookie_user_id:
-#         user_data = get_user_by_id(cookie_user_id)
-#         if user_data:
-#             st.session_state['user_page'] = user_data
-#     st.session_state['cookie_checked'] = True
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -596,10 +586,8 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_main:
                 st.subheader("🏆 Top 10 Players")
                 if not df_dash.empty:
-                    # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
                     df_normal = df_dash.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
                     df_top10 = df_normal.head(10)
-                    
                     st.dataframe(df_top10[['อันดับ', 'photo', 'name', 'score', 'group']],
                         column_config={ 
                             "photo": st.column_config.ImageColumn("รูป", width="small"), 
@@ -615,25 +603,20 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
             with tab_top_jr:
                 st.subheader("👶 Top 10 Junior")
                 if not df_dash.empty:
-                    # ✅ กรองอายุ <= 13 (ใช้คอลัมน์ age)
                     df_jr = df_dash[df_dash['age'] <= 13].copy()
-                    
                     if not df_jr.empty:
-                        # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย), ชื่อ (ก->ฮ)
                         df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
                         df_top10_jr = df_jr.head(10)
-                        
                         st.dataframe(df_top10_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                             column_config={ 
                                 "photo": st.column_config.ImageColumn("รูป", width="small"), 
-                                "อันดับ Junior": st.column_config.NumberColumn("อันดับ Jr.", format="%d"), 
+                                "อันดับ Junior": st.column_config.NumberColumn("Rank Jr.", format="%d"), 
                                 "name": st.column_config.TextColumn("Player"), 
                                 "score_jr": st.column_config.NumberColumn("Score Jr.", format="%d 🍼"),
                                 "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
                             },
                             hide_index=True, use_container_width=True, height=450)
-                    else:
-                        st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
+                    else: st.info("ไม่มีผู้เล่นรุ่น Junior (อายุ <= 13 ปี)")
                 else: st.info("กำลังประมวลผลอันดับ...")
 
     with col_d2:
@@ -659,7 +642,6 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
@@ -693,11 +675,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     cat_color = "gray"
                     if "ประกาศ" in item['category']: cat_color = "red"
                     elif "กฎ" in item['category']: cat_color = "#2E86C1"
-                    st.markdown(f"<span style='color:{cat_color}; font-size:12px;'>🏷️ {item['category']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align:right;'><span style='background-color:{cat_color}; padding: 4px 10px; border-radius: 5px; color: white;'>{item['category']}</span></div>", unsafe_allow_html=True)
                     
-                    short_content = (item['content'][:150] + '...') if len(item['content']) > 150 else item['content']
+                    st.caption(f"🗓️ วันที่ประกาศ: {item['date']}")
+                    st.markdown("---")
+                    
+                    short_content = (item['content'][:200] + '...') if len(item['content']) > 200 else item['content']
                     st.write(short_content)
-                    st.caption(f"🗓️ {item['date']}")
                     
                     c1, c2 = st.columns(2)
                     with c1:
@@ -721,9 +705,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 1: Normal Rank ---
         with tab_lb_main:
             st.subheader("🏆 ตารางอันดับรวม")
-            # ✅ เรียง Normal: อันดับ Rank SS2 (น้อย->มาก), ชื่อ (ก->ฮ)
             df_main = df_leaderboard.sort_values(by=["rank_num", "name"], ascending=[True, True]).reset_index(drop=True)
-            
             st.dataframe(df_main[['อันดับ', 'photo', 'name', 'score', 'group', 'title']],
                 column_config={ 
                     "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -738,14 +720,9 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
         # --- TAB 2: Junior Rank ---
         with tab_lb_jr:
             st.subheader("👶 ตารางอันดับ Junior")
-            
-            # ✅ กรองเฉพาะอายุ <= 13 ปี
             df_jr = df_leaderboard[df_leaderboard['age'] <= 13].copy()
-            
             if not df_jr.empty:
-                # ✅ เรียง Junior: คะแนน Junior (มาก->น้อย) -> ชื่อ (ก->ฮ)
                 df_jr = df_jr.sort_values(by=["score_jr", "name"], ascending=[False, True]).reset_index(drop=True)
-                
                 st.dataframe(df_jr[['อันดับ Junior', 'photo', 'name', 'score_jr', 'age']],
                     column_config={ 
                         "photo": st.column_config.ImageColumn("รูปโปรไฟล์"), 
@@ -755,8 +732,7 @@ elif st.session_state['selected_menu'] == "🏆 ตารางอันดั�
                         "age": st.column_config.NumberColumn("อายุ", format="%d ปี")
                     },
                     hide_index=True, use_container_width=True, height=600)
-            else:
-                st.info("ยังไม่มีข้อมูลผู้เล่นรุ่น Junior (อายุไม่เกิน 13 ปี)")
+            else: st.info("ยังไม่มีข้อมูลผู้เล่นรุ่น Junior (อายุไม่เกิน 13 ปี)")
 
     else: st.warning("ไม่พบข้อมูลสมาชิก")
 
@@ -784,7 +760,6 @@ elif st.session_state['selected_menu'] == "📢 ประกาศ/ข่าว�
                     
                     if st.button("📖 อ่านเนื้อหาฉบับเต็ม", key=f"news_full_{item['id']}"):
                         show_news_popup(item)
-
         else: st.info("ยังไม่มีประกาศ")
 
 # 📜 PAGE: RULES (NEW)
