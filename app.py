@@ -4,7 +4,7 @@ import time
 import uuid
 import pandas as pd
 from datetime import datetime, date, timedelta
-import extra_streamlit_components as stx
+# import extra_streamlit_components as stx # ปิดตัวนี้ชั่วคราวเพื่อแก้หน้าจอขาว
 from streamlit_calendar import calendar
 import pytz 
 
@@ -34,36 +34,7 @@ headers = {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28"
 }
-# ================= 🛠️ DEBUG ZONE (แปะแทรกตรงนี้) =================
-# เช็คว่าอยู่บน Cloud แล้ว Token มาไหม?
-if st.sidebar.checkbox("🔧 เปิดโหมดตรวจสอบ (Debug)", value=True):
-    st.sidebar.divider()
-    st.sidebar.warning("🔎 สถานะการเชื่อมต่อ")
-    
-    # 1. เช็ค Token
-    if NOTION_TOKEN == "CHECK_SECRETS":
-        st.sidebar.error("❌ ไม่พบ Token! (ระบบกำลังใช้ค่า Default)")
-        st.sidebar.info("👉 กรุณาไปตั้งค่า Secrets ใน Streamlit Cloud Dashboard")
-    else:
-        st.sidebar.success(f"✅ พบ Token (ยาว {len(NOTION_TOKEN)} ตัวอักษร)")
 
-    # 2. เช็คการเชื่อมต่อจริง (ยิงไปหา Project DB)
-    if st.sidebar.button("ทดสอบยิง API เดี๋ยวนี้"):
-        try:
-            debug_url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
-            debug_res = requests.post(debug_url, json={"page_size": 1}, headers=headers)
-            
-            st.sidebar.write(f"📡 Status: `{debug_res.status_code}`")
-            if debug_res.status_code == 200:
-                st.sidebar.success("🎉 เชื่อมต่อ Notion ได้สำเร็จ!")
-                st.sidebar.json(debug_res.json()) # ดูข้อมูลที่ได้
-            else:
-                st.sidebar.error("💀 เชื่อมต่อไม่ได้")
-                st.sidebar.code(debug_res.text) # ดูว่า Notion ด่าว่าอะไร
-        except Exception as e:
-            st.sidebar.error(f"Error: {e}")
-    st.sidebar.divider()
-# =================================================================
 # ================= HELPER FUNCTIONS =================
 
 def extract_numeric(prop):
@@ -169,14 +140,14 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
-# 🔥 [UPDATED] ดึงเฉพาะลิ้งค์อัลบั้มรูป
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
+    # ดึง 50 รายการล่าสุด
     payload = { 
-        "page_size": 100, 
+        "page_size": 50, 
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
     }
     
@@ -187,10 +158,12 @@ def get_photo_gallery():
             for page in data.get("results", []):
                 props = page.get('properties', {})
                 
+                # 1. เช็คว่ามี Photo URL หรือไม่
                 photo_url = None
                 if "Photo URL" in props:
                     photo_url = props["Photo URL"].get("url")
                 
+                # ถ้ามี Link รูป ค่อยดึงข้อมูลอื่นต่อ
                 if photo_url:
                     title = "กิจกรรม (ไม่ระบุชื่อ)"
                     if "ชื่อกิจกรรม" in props:
@@ -218,7 +191,6 @@ def get_photo_gallery():
         
     return gallery_items
 
-# 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
     events = []
@@ -259,7 +231,6 @@ def get_calendar_events():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "#")
                 
-                # ✅ 1. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -280,7 +251,6 @@ def get_calendar_events():
                                 "backgroundColor": bg_color, 
                                 "borderColor": bg_color, 
                                 "allDay": True,
-                                # ✅ เก็บรายละเอียดไว้ใน extendedProps เพื่อส่งไปที่ปฏิทิน
                                 "extendedProps": { "url": event_url, "details": details_text }
                             })
                     except: pass
@@ -290,7 +260,6 @@ def get_calendar_events():
         except: break
     return events
 
-# 🔥 [UPDATED] ดึงกิจกรรมถัดไป (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_upcoming_event():
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
@@ -329,7 +298,6 @@ def get_upcoming_event():
                 if "URL" in props:
                     event_url = props["URL"].get("url", "")
 
-                # ✅ 2. ดึงรายละเอียดเพิ่มเติม
                 details_text = "-"
                 try:
                     d_list = props.get("รายละเอียดเพิ่มเติม", {}).get("rich_text", [])
@@ -337,11 +305,8 @@ def get_upcoming_event():
                 except: pass
 
                 return {
-                    "title": title, 
-                    "date": d_str, 
-                    "type": event_type, 
-                    "url": event_url, 
-                    "details": details_text # ส่งค่ากลับไปด้วย
+                    "title": title, "date": d_str, "type": event_type, 
+                    "url": event_url, "details": details_text
                 }
         else:
             print(f"Error fetching event: {res.status_code}")
@@ -534,7 +499,6 @@ def show_news_popup(item):
         st.markdown("---")
         st.link_button("🔗 Link ต้นทาง", item['url'], use_container_width=True)
 
-# ✅ [UPDATED] Dialog รายละเอียดกิจกรรม (เพิ่มส่วนแสดงเนื้อหา details)
 @st.dialog("รายละเอียดกิจกรรม")
 def show_event_popup(title, details, url):
     st.write(f"### {title}")
@@ -548,12 +512,14 @@ def show_event_popup(title, details, url):
     st.write("---")
 
     if url and url != "#":
-        st.link_button("🚀 ไปที่หน้าลงทะเบียน", url, type="primary", use_container_width=True)
+        st.link_button("🚀 ไปที่หน้าเว็บ", url, type="primary", use_container_width=True)
 
 # ================= UI START =================
 st.title("🏆LSX Ranking")
 
-cookie_manager = stx.CookieManager(key="lsx_cookie_manager")
+# ❌ ปิดการใช้งาน Cookie Manager ชั่วคราวเพื่อแก้ปัญหาหน้าจอขาวบน Cloud
+# cookie_manager = stx.CookieManager(key="lsx_cookie_manager")
+cookie_manager = None
 
 if 'user_page' not in st.session_state: st.session_state['user_page'] = None
 if 'selected_menu' not in st.session_state: st.session_state['selected_menu'] = "🏠 หน้าแรก (Dashboard)"
@@ -563,14 +529,15 @@ if 'last_clicked_event' not in st.session_state: st.session_state['last_clicked_
 if 'cookie_checked' not in st.session_state:
     st.session_state['cookie_checked'] = False
 
-if not st.session_state['cookie_checked']:
-    time.sleep(0.5) 
-    cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
-    if cookie_user_id:
-        user_data = get_user_by_id(cookie_user_id)
-        if user_data:
-            st.session_state['user_page'] = user_data
-    st.session_state['cookie_checked'] = True
+# ส่วนเช็ค Cookie เดิม (ปิดไว้ก่อน)
+# if not st.session_state['cookie_checked']:
+#     time.sleep(0.5) 
+#     cookie_user_id = cookie_manager.get(cookie="lsx_user_id")
+#     if cookie_user_id:
+#         user_data = get_user_by_id(cookie_user_id)
+#         if user_data:
+#             st.session_state['user_page'] = user_data
+#     st.session_state['cookie_checked'] = True
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -684,13 +651,13 @@ if st.session_state['selected_menu'] == "🏠 หน้าแรก (Dashboard)"
                     if days_left == 0: st.error("🔥 วันนี้!")
                     elif days_left > 0: st.info(f"⏳ อีก {days_left} วัน")
                     
-                    # ✅ เพิ่มปุ่มรายละเอียดเพิ่มเติม
+                    # ✅ ปุ่มรายละเอียดเพิ่มเติม
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("📄 รายละเอียด", key="btn_next_evt_detail"):
                             show_event_popup(next_event['title'], next_event['details'], next_event['url'])
                     with c2:
-                        if next_event['url']: st.link_button("🚀 ไปที่หน้าลงทะเบียน", next_event['url'], use_container_width=True)
+                        if next_event['url']: st.link_button("🚀 ไปที่หน้าเว็บ", next_event['url'], use_container_width=True)
             else: st.info("ไม่มีกิจกรรมเร็วๆ นี้")
 
         # --- รูปภาพล่าสุด ---
@@ -911,7 +878,7 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
                 user_data = check_login(username, password)
                 if user_data:
                     st.session_state['user_page'] = user_data
-                    if remember_me: cookie_manager.set("lsx_user_id", user_data['id'], expires_at=datetime.now().replace(year=datetime.now().year + 1))
+                    if remember_me: pass # cookie_manager.set(...) # ปิดการใช้ Cookie ชั่วคราว
                     st.rerun()
                 else: st.error("Login failed: Username หรือ Password ไม่ถูกต้อง")
             st.markdown("---")
@@ -1029,8 +996,8 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
             
             st.markdown("---")
             if st.button("Logout", type="secondary"):
-                try: cookie_manager.delete("lsx_user_id")
-                except: pass
+                # try: cookie_manager.delete("lsx_user_id")
+                # except: pass
                 st.session_state['user_page'] = None
                 st.session_state['auth_mode'] = 'login'
                 st.toast("👋 Logout Success"); time.sleep(1); st.rerun()
@@ -1123,4 +1090,3 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown("<div style='text-align: center; color: #888; font-size: 14px;'>Created by LovelyToonZ</div>", unsafe_allow_html=True)
-
