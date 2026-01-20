@@ -140,15 +140,15 @@ def get_latest_news(limit=5, category_filter=None):
     except: pass
     return news_list
 
-# 🔥 [UPDATED] ดึงแกลเลอรี (รองรับ Page Cover + Photo URL)
+# 🔥 [UPDATED] ดึงเฉพาะลิ้งค์อัลบั้มรูป (ตัดรูปตัวอย่างออกเพื่อให้โหลดไวและชัวร์)
 @st.cache_data(ttl=300)
 def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    # ดึงเฉพาะรายการที่มีรูปปก หรือ มี Photo URL
+    # ดึง 50 รายการล่าสุด
     payload = { 
-        "page_size": 20, 
+        "page_size": 100, 
         "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
     }
     
@@ -158,32 +158,40 @@ def get_photo_gallery():
             data = res.json()
             for page in data.get("results", []):
                 props = page.get('properties', {})
-                photo_url = ""
                 
-                # 1. ลองดึงจาก "Photo URL"
+                # 1. เช็คว่ามี Photo URL หรือไม่
+                photo_url = None
                 if "Photo URL" in props:
-                    photo_url = props["Photo URL"].get("url", "")
+                    photo_url = props["Photo URL"].get("url")
                 
+                # ถ้ามี Link รูป ค่อยดึงข้อมูลอื่นต่อ
                 if photo_url:
-                    title = "Unknown Event"
+                    # ดึงชื่อ
+                    title = "กิจกรรม (ไม่ระบุชื่อ)"
                     if "ชื่อกิจกรรม" in props:
                         t_list = props["ชื่อกิจกรรม"].get("title", [])
                         if t_list: title = t_list[0]["text"]["content"]
                     
-                    date_str = "ไม่ระบุวันที่"
+                    # ดึงวันที่
+                    date_str = ""
                     if "วันที่จัดกิจกรรม" in props:
                         d_obj = props["วันที่จัดกิจกรรม"].get("date")
                         if d_obj:
                             d_start = d_obj.get("start")
                             if d_start:
-                                date_str = datetime.strptime(d_start, "%Y-%m-%d").strftime("%d %b %Y")
+                                try:
+                                    date_obj = datetime.strptime(d_start, "%Y-%m-%d")
+                                    date_str = date_obj.strftime("%d/%m/%Y")
+                                except: date_str = d_start
                                 
                     gallery_items.append({
-                        "title": title, "date_str": date_str, "photo_url": photo_url
+                        "title": title, 
+                        "date_str": date_str, 
+                        "photo_url": photo_url
                     })
     except Exception as e:
-        print(f"Gallery Error: {e}")
         pass
+        
     return gallery_items
 
 # 🔥 [UPDATED] ดึงข้อมูลปฏิทิน
@@ -801,19 +809,27 @@ elif st.session_state['selected_menu'] == "📅 ปฏิทินกิจก�
 
 # 📸 PAGE: GALLERY
 elif st.session_state['selected_menu'] == "📸 แกลเลอรี":
-    st.subheader("📸 แกลเลอรีรูปภาพกิจกรรม")
-    with st.spinner("กำลังโหลดรูปภาพ..."):
+    st.subheader("📸 คลังภาพกิจกรรม")
+    st.info("รวมลิ้งค์รูปภาพจากกิจกรรมต่างๆ ที่ผ่านมา")
+    
+    with st.spinner("กำลังค้นหาอัลบั้มรูป..."):
         gallery_items = get_photo_gallery()
+        
         if not gallery_items: 
-            st.info("ยังไม่มีข้อมูลรูปภาพกิจกรรม")
+            st.warning("📭 ไม่พบรายการที่มี Photo URL ใน Database")
+            st.write("คำแนะนำ: กรุณาตรวจสอบว่าใส่ลิ้งค์ในช่อง 'Photo URL' ใน Notion แล้วหรือยัง")
         else:
-            cols = st.columns(2)
-            for i, item in enumerate(gallery_items):
-                with cols[i % 2]:
-                    with st.container(border=True):
-                        st.write(f"**{item['title']}**")
-                        st.caption(f"🗓️ {item['date_str']}")
-                        st.link_button("🖼️ ดูอัลบั้มรูป", item['photo_url'], use_container_width=True)
+            # แสดงผลแบบรายการ (List View) ดูง่ายๆ
+            for item in gallery_items:
+                with st.container(border=True):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"### 🖼️ {item['title']}")
+                        if item['date_str']:
+                            st.caption(f"🗓️ วันที่จัดกิจกรรม: {item['date_str']}")
+                    with col2:
+                        st.write("") # ดันปุ่มลงมาหน่อย
+                        st.link_button("📂 เปิดดูรูปภาพ", item['photo_url'], type="primary", use_container_width=True)
 
 # 🔐 PAGE: MEMBER SYSTEM
 elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก / ข้อมูลส่วนตัว":
