@@ -34,7 +34,36 @@ headers = {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28"
 }
+# ================= 🛠️ DEBUG ZONE (แปะแทรกตรงนี้) =================
+# เช็คว่าอยู่บน Cloud แล้ว Token มาไหม?
+if st.sidebar.checkbox("🔧 เปิดโหมดตรวจสอบ (Debug)", value=True):
+    st.sidebar.divider()
+    st.sidebar.warning("🔎 สถานะการเชื่อมต่อ")
+    
+    # 1. เช็ค Token
+    if NOTION_TOKEN == "CHECK_SECRETS":
+        st.sidebar.error("❌ ไม่พบ Token! (ระบบกำลังใช้ค่า Default)")
+        st.sidebar.info("👉 กรุณาไปตั้งค่า Secrets ใน Streamlit Cloud Dashboard")
+    else:
+        st.sidebar.success(f"✅ พบ Token (ยาว {len(NOTION_TOKEN)} ตัวอักษร)")
 
+    # 2. เช็คการเชื่อมต่อจริง (ยิงไปหา Project DB)
+    if st.sidebar.button("ทดสอบยิง API เดี๋ยวนี้"):
+        try:
+            debug_url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
+            debug_res = requests.post(debug_url, json={"page_size": 1}, headers=headers)
+            
+            st.sidebar.write(f"📡 Status: `{debug_res.status_code}`")
+            if debug_res.status_code == 200:
+                st.sidebar.success("🎉 เชื่อมต่อ Notion ได้สำเร็จ!")
+                st.sidebar.json(debug_res.json()) # ดูข้อมูลที่ได้
+            else:
+                st.sidebar.error("💀 เชื่อมต่อไม่ได้")
+                st.sidebar.code(debug_res.text) # ดูว่า Notion ด่าว่าอะไร
+        except Exception as e:
+            st.sidebar.error(f"Error: {e}")
+    st.sidebar.divider()
+# =================================================================
 # ================= HELPER FUNCTIONS =================
 
 def extract_numeric(prop):
@@ -1094,3 +1123,4 @@ elif st.session_state['selected_menu'] == "🔐 ระบบสมาชิก /
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 st.markdown("<div style='text-align: center; color: #888; font-size: 14px;'>Created by LovelyToonZ</div>", unsafe_allow_html=True)
+
