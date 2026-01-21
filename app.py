@@ -145,49 +145,73 @@ def get_photo_gallery():
     gallery_items = []
     url = f"https://api.notion.com/v1/databases/{PROJECT_DB_ID}/query"
     
-    payload = { 
-        "page_size": 100, 
-        "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
-    }
+    # เพิ่ม Pagination เพื่อให้ดึงรูปได้ครบทุกรูป (ถ้าเกิน 100 รูป)
+    has_more = True
+    next_cursor = None
     
-    try:
-        res = requests.post(url, json=payload, headers=headers)
-        if res.status_code == 200:
-            data = res.json()
-            for page in data.get("results", []):
-                props = page.get('properties', {})
-                
-                photo_url = None
-                if "Photo URL" in props:
-                    photo_url = props["Photo URL"].get("url")
-                
-                if photo_url:
-                    title = "กิจกรรม (ไม่ระบุชื่อ)"
-                    if "ชื่อกิจกรรม" in props:
-                        t_list = props["ชื่อกิจกรรม"].get("title", [])
-                        if t_list: title = t_list[0]["text"]["content"]
-                    
-                    date_str = ""
-                    if "วันที่จัดกิจกรรม" in props:
-                        d_obj = props["วันที่จัดกิจกรรม"].get("date")
-                        if d_obj:
-                            d_start = d_obj.get("start")
-                            if d_start:
-                                try:
-                                    date_obj = datetime.strptime(d_start, "%Y-%m-%d")
-                                    date_str = date_obj.strftime("%d/%m/%Y")
-                                except: date_str = d_start
-                                
-                    gallery_items.append({
-                        "title": title, 
-                        "date_str": date_str, 
-                        "photo_url": photo_url
-                    })
-    except Exception as e:
-        pass
+    while has_more:
+        payload = { 
+            "page_size": 100, 
+            "sorts": [ { "property": "วันที่จัดกิจกรรม", "direction": "descending" } ] 
+        }
+        if next_cursor: payload["start_cursor"] = next_cursor
         
-    return gallery_items
+        try:
+            res = requests.post(url, json=payload, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                for page in data.get("results", []):
+                    props = page.get('properties', {})
+                    
+                    # 1. ดึง Photo URL
+                    photo_url = None
+                    if "Photo URL" in props:
+                        photo_url = props["Photo URL"].get("url")
+                        # เผื่อกรณีเป็น Text ไม่ใช่ URL
+                        if not photo_url and props["Photo URL"].get("type") == "rich_text":
+                             try: photo_url = props["Photo URL"]["rich_text"][0]["text"]["content"]
+                             except: pass
 
+                    # 2. ถ้ามี URL ให้ประมวลผลต่อ
+                    if photo_url:
+                        title = "กิจกรรม (ไม่ระบุชื่อ)"
+                        if "ชื่อกิจกรรม" in props:
+                            try: title = props["ชื่อกิจกรรม"]["title"][0]["text"]["content"]
+                            except: pass
+                        
+                        date_str = ""
+                        if "วันที่จัดกิจกรรม" in props:
+                            d_obj = props["วันที่จัดกิจกรรม"].get("date")
+                            if d_obj:
+                                d_start = d_obj.get("start")
+                                if d_start:
+                                    # ลองแปลงวันที่ (รองรับทั้งแบบมีเวลา และไม่มีเวลา)
+                                    try:
+                                        # ถ้ามี T (มีเวลา) ให้ตัดทิ้งเอาแค่วันที่ข้างหน้า
+                                        if "T" in d_start:
+                                            d_start = d_start.split("T")[0]
+                                            
+                                        date_obj = datetime.strptime(d_start, "%Y-%m-%d")
+                                        date_str = date_obj.strftime("%d/%m/%Y")
+                                    except:
+                                        date_str = d_start # ถ้าแปลงไม่ได้จริงๆ ให้โชว์ค่าเดิมไปเลย
+
+                        # ✅ จุดแก้ไขสำคัญ: ย้าย append ออกมาอยู่ระดับนอกสุดของ if photo_url
+                        # เพื่อให้มั่นใจว่าถูกเพิ่มเข้า List เสมอ ไม่ว่าจะแปลงวันที่สำเร็จหรือไม่
+                        gallery_items.append({
+                            "title": title, 
+                            "date_str": date_str, 
+                            "photo_url": photo_url
+                        })
+                
+                has_more = data.get("has_more", False)
+                next_cursor = data.get("next_cursor")
+            else: break
+        except Exception as e:
+            break
+            
+    return gallery_items
+	
 # 🔥 [UPDATED] ดึงข้อมูลปฏิทิน (เพิ่มการดึงรายละเอียดเพิ่มเติม)
 @st.cache_data(ttl=300)
 def get_calendar_events():
